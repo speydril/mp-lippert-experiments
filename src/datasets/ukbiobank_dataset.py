@@ -136,7 +136,6 @@ class UkBiobankDataset(BaseDataset):
         )
 
     def load_data(self) -> list[BiobankSampleReference]:
-        sample_folder = Path(self.yaml_config.ukbiobank_data_dir)
         mask_folder = (
             Path(self.yaml_config.ukbiobank_masks_dir)
             / f"v{self.config.mask_iteration}"

@@ -40,6 +40,10 @@ class ChaseDb1DatasetArgs(BaseModel):
         default=0.8,
         description="Percentage of data to use for training. Other data will be assigned to val and, if enabled, test.",
     )
+    chasedb1_enable_augment: bool = Field(
+        default=True,
+        description="Enable augmentations during train"
+    )
 
 
 class ChaseDb1Dataset(BaseDataset):
@@ -65,7 +69,7 @@ class ChaseDb1Dataset(BaseDataset):
         sample = self.samples[index]
         train_transform, test_transform = get_polyp_transform()
 
-        augmentations = train_transform if sample.split == "train" else test_transform
+        augmentations = test_transform
 
         image = self.cv2_loader(sample.img_path, is_mask=False)
         gt = self.cv2_loader(sample.gt_path, is_mask=True)

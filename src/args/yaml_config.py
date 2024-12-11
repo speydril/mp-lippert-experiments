@@ -21,7 +21,7 @@ class YamlConfigModel(BaseModel):
         default="results", description="Output directory for experiment results"
     )
     ukbiobank_data_dir: str = Field(
-        default="/dhc/projects/ukbiobank/derived/imaging/retinal_fundus/images_resized_224",
+        default="/dhc/projects/ukbiobank/derived/imaging/retinal_fundus",
         description="Directory where UK Biobank data is stored",
     )
     # TODO: Generate masks and reference here

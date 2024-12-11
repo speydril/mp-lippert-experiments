@@ -69,6 +69,12 @@ class MultiDsVesselExperiment(BaseExperiment):
                 torch.load(self.config.prompt_encoder_checkpoint, map_location="cuda"),
                 strict=True,
             )
+        if self.config.from_checkpoint is not None:
+            print(f"loading model from checkpoint {self.config.from_checkpoint}")
+            model.load_state_dict(
+                torch.load(self.config.from_checkpoint, map_location="cuda"),
+                strict=True,
+            )
         return model
 
     @classmethod

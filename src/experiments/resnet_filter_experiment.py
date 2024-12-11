@@ -1,9 +1,10 @@
 import os
+from pathlib import Path
 import matplotlib.pyplot as plt
 from typing import Literal, Any
 import torch
 from torch.optim.optimizer import Optimizer
-from src.datasets.ukbiobank_dataset import UkBiobankDataset, UkBiobankDatasetArgs
+from src.datasets.ukbiobank_dataset import BiobankSampleReference
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
 from src.models.base_model import BaseModel
 from src.args.yaml_config import YamlConfigModel
@@ -72,17 +73,24 @@ class ResnetFilterExperiment(BaseExperiment):
             self._run_on_uk_biobank(trained_model)
 
     def _run_on_uk_biobank(self, trained_model: BaseModel):
-        args = UkBiobankDatasetArgs(
-            train_percentage=1.0,
-        )
-        bio_bank_data = UkBiobankDataset(args, self.yaml_config).get_split("train")
+        samples = []
+        for path in ["/left/896_left", "/right/896_right"]:
+            total_path = self.yaml_config.ukbiobank_data_dir + path
+            files = os.listdir(total_path)
+            for f in files:
+                samples.append(
+                    BiobankSampleReference(
+                        img_path=Path(f"{total_path}/{f}"), split="test", gt_path=None
+                    )
+                )
+
         data = FilterDataset(
             self.config,
             self.yaml_config,
             samples=[
                 # Apply test transform for inference
                 FilterFileReference(str(p.img_path), 0, "test")
-                for p in bio_bank_data.samples
+                for p in samples
             ],
         )
         all_samples_loader = DataLoader(
