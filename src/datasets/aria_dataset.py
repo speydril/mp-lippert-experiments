@@ -30,7 +30,7 @@ class ARIASample(Sample):
 class ARIADatasetArgs(BaseModel):
     """Define arguments for the dataset here, i.e. preprocessing related stuff etc"""
 
-    annotator: Literal["BSS", "BDP"] = "BSS"
+    aria_annotator: Literal["BSS", "BDP"] = "BSS"
 
 
 class ARIADataset(BaseDataset):
@@ -98,7 +98,7 @@ class ARIADataset(BaseDataset):
             (
                 str(Path(imgs_dir) / img_file),
                 str(
-                    Path(gts_dir) / f"{img_file.removesuffix('.tif')}_{self.config.annotator}.tif"
+                    Path(gts_dir) / f"{img_file.removesuffix('.tif')}_{self.config.aria_annotator}.tif"
 
                 ),
             )

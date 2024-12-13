@@ -1,6 +1,7 @@
 from typing import Callable, Literal, Optional
 from typing_extensions import Self
 from pydantic import BaseModel, Field
+from datasets.aria_dataset import ARIADatasetArgs
 from src.models.auto_sam_model import SAMSampleFileReference
 from src.args.yaml_config import YamlConfigModel
 from src.datasets.base_dataset import BaseDataset, JoinedDataset
@@ -11,7 +12,7 @@ from src.datasets.stare_dataset import STAREDataset, STAREDatasetArgs
 
 
 class JoinedRetinaDatasetArgs(
-    DriveDatasetArgs, ChaseDb1DatasetArgs, STAREDatasetArgs, HrfDatasetArgs
+    DriveDatasetArgs, ChaseDb1DatasetArgs, STAREDatasetArgs, HrfDatasetArgs, ARIADatasetArgs
 ):
     pass
 

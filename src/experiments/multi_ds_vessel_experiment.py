@@ -1,6 +1,7 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
+from datasets.aria_dataset import ARIADataset, ARIADatasetArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
@@ -56,6 +57,13 @@ class MultiDsVesselExperiment(BaseExperiment):
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
+        if split == "train":
+            ds = JoinedDataset([self.ds.get_split('train'), self.ds.get_split('val')])
+            return ds
+        if split == "val":
+            return self.ds.get_split('test')
+        if split == "test":
+            return ARIADataset(config=self.config, yaml_config=self.yaml_config)
         return self.ds.get_split(split)
 
     def _create_model(self) -> BaseModel:
