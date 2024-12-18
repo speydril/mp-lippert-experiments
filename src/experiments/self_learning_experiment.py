@@ -61,7 +61,6 @@ class SelfLearningExperiment(BaseExperiment):
             config=self.config,
             yaml_config=yaml_config,
             with_masks=False,
-            random_augmentation_for_all_splits=True,
         )
         super().__init__(config, yaml_config)
 

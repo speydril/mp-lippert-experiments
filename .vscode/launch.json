@@ -120,8 +120,8 @@
                 "--image_encoder_lr=0.00001",
                 "--prompt_encoder_lr=0.0003",
                 "--mask_decoder_lr=0.0001",
-                "--batch_size=1",
-                "--secondary_batch_size=3",
+                "--batch_size=4",
+                "--secondary_batch_size=8",
                 "--epochs=100",
                 "--weight_decay=1e-4",
                 "--early_stopping_patience=10",
@@ -130,7 +130,6 @@
                 "--step_size=5",
                 "--best_model_metric=IoU",
                 "--minimize_best_model_metric=false",
-                "--from_checkpoint=/dhc/groups/mp2024cl2/results/multi_ds_vessel_experiment/reference_flashattn_waria/model.pt",
             ]
         },
         {

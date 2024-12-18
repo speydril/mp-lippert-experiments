@@ -6,8 +6,10 @@ import numpy as np
 import torch
 import wandb
 from torch.utils.data import DataLoader
+from torch.nn import functional as F
 
-from src.models.auto_sam_model import norm_batch
+
+from src.models.auto_sam_model import SAMBatch, norm_batch
 from src.models.base_model import Loss, ModelOutput
 from src.experiments.self_learning_experiment import SelfLearningExperiment
 from src.datasets.base_dataset import Batch
@@ -15,6 +17,7 @@ from src.experiments.base_experiment import BaseExperiment
 from src.train.evaluator import Evaluator
 from src.train.history import EpochLosses, SingleEpochHistory, TrainHistory
 from src.train.trainer import Trainer
+from src.util.datatset_helper import generate_unsup_data
 
 
 class SelfTrainer(Trainer):
@@ -71,28 +74,31 @@ class SelfTrainer(Trainer):
         # Adjust learning weights
         self.optimizer.step()
         return outputs, loss
+    
+    # Taken from https://github.com/usr922/FST/blob/main/semi_seg/train_semi.py
+    # Line: 326
+    def _augment_batch(self, batch: SAMBatch):
+        assert batch.target is not None
 
-    def _self_learning_log_intermediate(
-        self,
-        batch: int,
-        n_batches: int,
-        evaluator: Evaluator,
-        unlabeled_evaluator: Evaluator,
-    ):
-        loss = evaluator.get_latest_loss()
-        running = evaluator.get_running_loss()
-        unlabeled_loss = unlabeled_evaluator.get_latest_loss()
-        unlabeled_running = unlabeled_evaluator.get_running_loss()
-        print(
-            f"Batch {batch + 1}/{n_batches} {self.loss_name}_loss: {loss:.2f} running: {running:.2f}; unlabeled_{self.loss_name}_loss: {unlabeled_loss:.2f} unlabeled_running: {unlabeled_running:.2f}\r",
-            end="",
-        )
+        # apply strong data augmentation: cutout or cutmix
+        if np.random.uniform(0, 1) < 0.5:
+            image_u_aug, label_u_aug = \
+                generate_unsup_data(batch.input, batch.target)
+        else:
+            image_u_aug = batch.input
+            label_u_aug = batch.target
+        
+        return SAMBatch(
+            input=image_u_aug,
+            target=label_u_aug,
+            original_size=batch.original_size,
+            image_size=batch.image_size,)
+        
 
     def _self_learning_epoch(self, data_loader: DataLoader, epoch: int):
         self.model.eval()
         self.experiment.student_model.train()
         evaluator = self.experiment.create_evaluator("train")
-        unlabeled_evaluator = self.experiment.create_evaluator("train")
         iter_unlabeled = iter(self.experiment.unlabeled_loader)
 
         for i, batch in enumerate(data_loader):
@@ -101,31 +107,62 @@ class SelfTrainer(Trainer):
             unlabeled_batch = next(iter_unlabeled).to(self.device)
 
             # Create pseudo labels for unlabeled data
-            # TODO: Input is already augmented here
-            # Does input augmentation reduce the quality of the pseudo labels?
+            # The input data is not augmented yet, this is done after pseudo labels are created
             with torch.no_grad():
-                unlabeled_batch.target = norm_batch( self.model.forward(unlabeled_batch).logits)
+                unlabeled_batch.target = norm_batch(self.model.forward(unlabeled_batch).logits)
+                
+            # Batches are combined to one batch
+            batch = self._merge_batches(cast(SAMBatch, batch), unlabeled_batch)
+            batch = self._augment_batch(batch)
 
-            sup_outputs, sup_loss = self._backward_batch_student(batch)
-            unsup_outputs, unsup_loss = self._backward_batch_student(unlabeled_batch)
+            outputs, loss = self._backward_batch_student(batch)
 
             # Adjust weights of teacher model
             with torch.no_grad():  # Disable gradient tracking
                 self._update_ema(iteration)
 
-            evaluator.track_batch(sup_outputs, sup_loss, batch)
-            unlabeled_evaluator.track_batch(unsup_outputs, unsup_loss, unlabeled_batch)
+            evaluator.track_batch(outputs, loss, batch)
 
             if (
                 i % self.config.log_every_n_batches
                 == self.config.log_every_n_batches - 1
             ):
-                self._self_learning_log_intermediate(
-                    i, len(self.dataloader_train), evaluator, unlabeled_evaluator
+                self._log_intermediate(
+                    i, len(self.dataloader_train), evaluator
                 )
         results = evaluator.evaluate()
         evaluator.clean_up()
         return results
+    
+    def _merge_batches(self, gt_batch: SAMBatch, pseudo_batch: SAMBatch) -> SAMBatch:
+        assert gt_batch.target is not None and pseudo_batch.target is not None
+        
+        # Align tensors
+        if gt_batch.target.dim() == 3:
+            gt_batch.target = gt_batch.target.unsqueeze(1)
+        if pseudo_batch.target.dim() == 3:
+            pseudo_batch.target = pseudo_batch.target.unsqueeze(1)
+        if gt_batch.input.dim() == 3:
+            gt_batch.input = gt_batch.input.unsqueeze(1)
+        if pseudo_batch.input.dim() == 3:
+            pseudo_batch.input = pseudo_batch.input.unsqueeze(1)
+            
+        size = pseudo_batch.target.shape[2:]
+        resized_gts = F.interpolate(
+            (
+                gt_batch.target.unsqueeze(dim=1)
+                if gt_batch.target.dim() != gt_batch.target.dim()
+                else gt_batch.target
+            ),
+            size,
+            mode="nearest",
+        )
+        
+        input = torch.cat([gt_batch.input, pseudo_batch.input], dim=0)    
+        target = torch.cat([resized_gts, pseudo_batch.target], dim=0)
+        return SAMBatch(input, target, original_size=gt_batch.original_size, image_size=gt_batch.image_size)
+        
+        
 
     def train(self):
         history: list[EpochLosses] = (

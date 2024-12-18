@@ -62,7 +62,7 @@ class UkBioBankExperiment(BaseExperiment):
             config=biobank_config,
             yaml_config=yaml_config,
             with_masks=True,
-            random_augmentation_for_all_splits=self.config.augment_train,
+            augment_inputs=self.config.augment_train,
         )
         self.joined_retina = JoinedRetinaDataset.from_config(self.config, yaml_config)
         super().__init__(config, yaml_config)
