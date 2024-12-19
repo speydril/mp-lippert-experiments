@@ -30,12 +30,10 @@ class UkBiobankDatasetArgs(BaseModel):
 class BiobankSampleReference:
     img_path: Path
     gt_path: Path | None
-    split: str
 
 
 @dataclass
 class BiobankSample(Sample):
-    split: str
     original_size: torch.Tensor
     image_size: torch.Tensor
     img_path: Path
@@ -59,7 +57,7 @@ class UkBiobankDataset(BaseDataset):
         samples: Optional[list[BiobankSampleReference]] = None,
         image_enc_img_size=1024,
         with_masks=False,
-        random_augmentation_for_all_splits=False,
+        augment_inputs=False,
     ):
         self.config = config
         self.yaml_config = yaml_config
@@ -74,7 +72,7 @@ class UkBiobankDataset(BaseDataset):
             pixel_mean=pixel_mean,
             pixel_std=pixel_std,
         )
-        self.random_augmentation_for_all_splits = random_augmentation_for_all_splits
+        self.augment_inputs = augment_inputs
         total_percentage = (
             self.config.train_percentage
             + self.config.val_percentage
@@ -95,9 +93,9 @@ class UkBiobankDataset(BaseDataset):
         train_transform, test_transform = get_polyp_transform()
 
         augmentations = (
-            test_transform
-            if file_ref.split == "test" and not self.random_augmentation_for_all_splits
-            else train_transform
+            train_transform
+            if self.augment_inputs
+            else test_transform
         )
         image = self.cv2_loader(str(file_ref.img_path), is_mask=False)
         gt = (
@@ -121,7 +119,6 @@ class UkBiobankDataset(BaseDataset):
             target=self.sam_trans.preprocess(mask),
             original_size=torch.Tensor(original_size),
             image_size=torch.Tensor(image_size),
-            split=file_ref.split,
             img_path=file_ref.img_path,
             gt_path=file_ref.gt_path,
         )
@@ -147,11 +144,34 @@ class UkBiobankDataset(BaseDataset):
         return collate
 
     def get_split(self, split: Literal["train", "val", "test"]) -> Self:
+        index_offset = (
+            0
+            if split == "train"
+            else (
+                floor(len(self.samples) * self.config.train_percentage)
+                if split == "val"
+                else floor(
+                    len(self.samples)
+                    * (self.config.train_percentage + self.config.val_percentage)
+                )
+            )
+        )
+        length = (
+            floor(len(self.samples) * self.config.train_percentage)
+            if split == "train"
+            else (
+                floor(len(self.samples) * self.config.val_percentage)
+                if split == "val"
+                else floor(len(self.samples) * self.config.test_percentage)
+            )
+        )
+        
         return self.__class__(
             self.config,
             self.yaml_config,
-            [sample for sample in self.samples if sample.split == split],
+            self.samples[index_offset : index_offset + length],
             with_masks=self.with_masks,
+            augment_inputs=self.augment_inputs if split == "train" else False,
         )
 
     def load_data(self) -> list[BiobankSampleReference]:
@@ -176,41 +196,10 @@ class UkBiobankDataset(BaseDataset):
             for path in selected_samples
             if path.endswith(".png")
         ]
-
-        train = self.load_data_for_split("train", sample_paths)
-        val = self.load_data_for_split("val", sample_paths)
-        test = self.load_data_for_split("test", sample_paths)
-
-        return train + val + test
-
-    def load_data_for_split(
-        self, split, sample_paths: list[tuple[Path, Path | None]]
-    ) -> list[BiobankSampleReference]:
-        index_offset = (
-            0
-            if split == "train"
-            else (
-                floor(len(sample_paths) * self.config.train_percentage)
-                if split == "val"
-                else floor(
-                    len(sample_paths)
-                    * (self.config.train_percentage + self.config.val_percentage)
-                )
-            )
-        )
-        length = (
-            floor(len(sample_paths) * self.config.train_percentage)
-            if split == "train"
-            else (
-                floor(len(sample_paths) * self.config.val_percentage)
-                if split == "val"
-                else floor(len(sample_paths) * self.config.test_percentage)
-            )
-        )
-
+        
         return [
-            BiobankSampleReference(img_path=img_path, gt_path=gt_path, split=split)
-            for img_path, gt_path in sample_paths[index_offset : index_offset + length]
+            BiobankSampleReference(img_path=img_path, gt_path=gt_path)
+            for img_path, gt_path in sample_paths
         ]
 
     def cv2_loader(self, path: str, is_mask: bool):
