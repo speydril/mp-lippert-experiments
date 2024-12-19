@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 import torch
+from src.models.segment_anything.modeling.sam import SamBatched
 from src.args.yaml_config import YamlConfig
 from src.util.polyp_transform import get_polyp_transform
 from src.models.segment_anything.build_sam import (
@@ -147,6 +148,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
         image: np.ndarray,
         pixel_mean: tuple[float, float, float],
         pixel_std: tuple[float, float, float],
+        img_encoder_size: int,
     ):
         import cv2
         from .segment_anything.utils.transforms import ResizeLongestSide
@@ -155,7 +157,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
         img, _ = test_transform(image, np.zeros_like(image))
         original_size = tuple(img.shape[1:3])
 
-        transform = ResizeLongestSide(1024, pixel_mean, pixel_std)
+        transform = ResizeLongestSide(img_encoder_size, pixel_mean, pixel_std)
         Idim = self.config.Idim
 
         image_tensor = transform.apply_image_torch(img)
@@ -167,7 +169,11 @@ class AutoSamModel(BaseModel[SAMBatch]):
         )
         dense_embeddings = self.prompt_encoder.forward(orig_imgs_small)
         with torch.no_grad():
-            mask = norm_batch(sam_call(input_images, self.sam, dense_embeddings))
+            mask = norm_batch(
+                sam_call(
+                    input_images, self.sam, dense_embeddings, image_encoder_no_grad=True
+                )
+            )
 
         mask = self.sam.postprocess_masks(
             mask, input_size=input_size, original_size=original_size
@@ -188,7 +194,9 @@ class AutoSamModel(BaseModel[SAMBatch]):
             yaml_config.fundus_pixel_mean,
             yaml_config.fundus_pixel_std,
         )
-        return self.segment_image(image, pixel_mean, pixel_std)
+        return self.segment_image(
+            image, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
+        )
 
     def segment_and_write_image_from_file(
         self,
@@ -265,9 +273,11 @@ def norm_batch(x):
     return x
 
 
-def sam_call(batched_input, sam, dense_embeddings, image_encoder_no_grad=True):
+def sam_call(
+    batched_input, sam: SamBatched, dense_embeddings, image_encoder_no_grad=True
+):
     with torch.set_grad_enabled(not image_encoder_no_grad):
-        input_images = torch.stack([sam.preprocess(x) for x in batched_input], dim=0)
+        input_images = batched_input
         image_embeddings = sam.image_encoder(input_images)
         sparse_embeddings_none, dense_embeddings_none = sam.prompt_encoder(
             points=None, boxes=None, masks=None
