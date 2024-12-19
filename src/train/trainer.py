@@ -236,7 +236,7 @@ class Trainer:
                 )
                 if best_index == 0:
                     print(
-                        f"\nEarly stopping after {epoch} epochs ({self.config.early_stopping_patience} epochs without improvement in validation {self.config.best_model_metric} metrics)"
+                        f"\nEarly stopping after {epoch} epochs (len history {len(history)}) ({self.config.early_stopping_patience} epochs without improvement in validation {self.config.best_model_metric} metrics)"
                     )
                     break
             if self.killer.should_stop():
