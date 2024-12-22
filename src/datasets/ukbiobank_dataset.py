@@ -24,6 +24,7 @@ class UkBiobankDatasetArgs(BaseModel):
         "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
     )
     mask_iteration: int = 0
+    limit: Optional[int] = None
 
 
 @dataclass
@@ -63,6 +64,7 @@ class UkBiobankDataset(BaseDataset):
         self.yaml_config = yaml_config
         self.with_masks = with_masks
         self.samples = self.load_data() if samples is None else samples
+        self.samples = self.samples if config.limit is None else self.samples[:config.limit]
         pixel_mean, pixel_std = (
             self.yaml_config.fundus_pixel_mean,
             self.yaml_config.fundus_pixel_std,
