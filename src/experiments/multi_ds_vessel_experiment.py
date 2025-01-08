@@ -38,13 +38,18 @@ class MultiDSVesselExperimentArgs(
         default=None,
         description="Learning rate for prompt encoder, if None, general learning rate is used",
     )
+    limit_train_samples: Optional[int] = Field(
+        default=None, description="Limit number of training samples"
+    )
 
 
 class MultiDsVesselExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = MultiDSVesselExperimentArgs(**config)
 
-        self.ds = JoinedRetinaDataset.from_config(self.config, yaml_config)
+        self.ds = JoinedRetinaDataset.from_config(
+            self.config, yaml_config, self.config.seed
+        )
         super().__init__(config, yaml_config)
 
     def get_name(self) -> str:
@@ -53,6 +58,8 @@ class MultiDsVesselExperiment(BaseExperiment):
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
+        if split == "train":
+            self.ds.get_split(split, limit_samples=self.config.limit_train_samples)
         return self.ds.get_split(split)
 
     def _create_model(self) -> BaseModel:
