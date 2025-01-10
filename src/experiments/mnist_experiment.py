@@ -31,7 +31,7 @@ class MnistExperiment(BaseExperiment):
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
-        return self.mnist_data.get_split(split)
+        return MnistDataset(self.config, self.yaml_config, split=split)
 
     def _create_model(self) -> BaseModel:
         return MnistFcModel(self.config)
