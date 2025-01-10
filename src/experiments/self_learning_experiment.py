@@ -1,4 +1,5 @@
-from typing import Literal, Any, Optional
+from math import floor
+from typing import Literal, Any, Optional, Type
 from click import prompt
 import torch
 from torch.optim.optimizer import Optimizer
@@ -40,46 +41,31 @@ class SelfLearningExperimentArgs(
     prompt_encoder_lr: Optional[float] = Field(
         default=None, description="Learning rate for prompt encoder"
     )
-    teacher_student_update_ratio: float = Field(
-        default=0.2, description="Ratio of teacher to student update"
+    minimum_student_ratio: float = Field(
+        default=0.1, description="Exponential moving average decay"
     )
-    ema_decay_origin: float = Field(
-        default=0.999, description="Exponential moving average decay"
-    )
-    secondary_batch_size: int = Field(
-        default=16, description="Batch size for unlabeled data"
+    maximum_student_ratio: float = Field(
+        default=0.5, description="Exponential moving average decay"
     )
 
 
 class SelfLearningExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = SelfLearningExperimentArgs(**config)
-
-        # Setting up labeled dataset and unlabeled dataset
-        self.ds_w_labels = JoinedRetinaDataset.from_config(self.config, yaml_config)
-        self.ds_wo_labels = UkBiobankDataset(
-            config=self.config,
-            yaml_config=yaml_config,
-            with_masks=False,
-        )
         super().__init__(config, yaml_config)
-
-        self.unlabeled_loader = DataLoader(
-            self.ds_wo_labels,
-            batch_size=self.config.secondary_batch_size,
-            shuffle=True,
-            collate_fn=self.ds_wo_labels.get_collate_fn(),
-        )
 
         # Setting up student model
         # Same architecture, same initial checkpoint
-        self.student_model = self._create_model()
+        self.teacher_model = self._create_model()
         if self.base_config.from_checkpoint is not None:
-            self.student_model.load_state_dict(
+            self.teacher_model.load_state_dict(
                 torch.load(self.base_config.from_checkpoint, map_location="cuda"),
                 strict=True,
             )
-        self.student_model.to("cuda")
+        self.teacher_model.to("cuda")
+
+    def _init_super(self, config: dict[str, Any], yaml_config: YamlConfigModel):
+        super().__init__(config, yaml_config)
 
     def get_name(self) -> str:
         return "self_learning_experiment"
@@ -92,14 +78,23 @@ class SelfLearningExperiment(BaseExperiment):
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
-        return self.ds_w_labels.get_split(split)
+        if split == "train":
+            return UkBiobankDataset(
+                config=self.config,
+                yaml_config=self.yaml_config,
+                with_masks=False,
+            )
+        else:
+            return JoinedRetinaDataset.from_config(
+                self.config, self.yaml_config
+            ).get_split(split)
 
     def _create_model(self) -> BaseModel:
         model = AutoSamModel(self.config, image_encoder_no_grad=False)
         return model
 
     @classmethod
-    def get_args_model(cls):
+    def get_args_model(cls) -> Type[BaseExperimentArgs]:
         return SelfLearningExperimentArgs
 
     def create_optimizer(self) -> Optimizer:
@@ -155,29 +150,3 @@ class SelfLearningExperiment(BaseExperiment):
     def run(self):
         # Execute finetuning
         super().run()
-
-    def run_after_training(self, trained_model: BaseModel):
-        model = cast(AutoSamModel, trained_model)
-
-        def predict_visualize(split: Literal["train", "test"]):
-            out_dir = os.path.join(self.results_dir, f"{split}_visualizations")
-            os.makedirs(out_dir, exist_ok=True)
-            ds = self.ds_wo_labels.get_split(split)
-            print(
-                f"\nCreating {self.config.visualize_n_segmentations} {split} segmentations"
-            )
-            for i in range(min(len(ds), self.config.visualize_n_segmentations)):
-                sample = ds.samples[i]
-                out_path = os.path.join(out_dir, f"{i}.png")
-                model.segment_and_write_image_from_file(
-                    str(sample.img_path),
-                    out_path,
-                    gts_path=str(sample.gt_path),
-                )
-                print(
-                    f"{i+1}/{self.config.visualize_n_segmentations} {split} segmentations created\r",
-                    end="",
-                )
-
-        predict_visualize("train")
-        predict_visualize("test")

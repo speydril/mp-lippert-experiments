@@ -8,6 +8,7 @@ import torch
 import wandb
 from torch.utils.data import DataLoader
 
+from src.models.base_model import Loss
 from src.datasets.base_dataset import Batch
 from src.experiments.base_experiment import BaseExperiment
 from src.train.evaluator import Evaluator
@@ -56,6 +57,12 @@ class Trainer:
         self.scheduler = experiment.create_scheduler(self.optimizer)
         self.killer = GracefulKiller()
 
+    def _get_train_model(self):
+        return self.model
+
+    def _get_eval_model(self):
+        return self.model
+
     def _log_intermediate(self, batch: int, n_batches: int, evaluator: Evaluator):
         loss = evaluator.get_latest_loss()
         running = evaluator.get_running_loss()
@@ -64,8 +71,32 @@ class Trainer:
             end="",
         )
 
+    def _preprocess_labels(self, batch: Batch):
+        return batch.target
+
+    def _augment_batch(self, batch: Batch) -> Batch:
+        return self._gaussian_noise_augmentation(batch)
+
+    def _gaussian_noise_augmentation(self, batch):
+        if self.config.whiteNoiseSD > 0:
+            input = batch.input
+            noised_input = input + (
+                torch.randn(input.shape, device=input.device) * self.config.whiteNoiseSD
+            )
+            batch.input = noised_input
+
+        if self.config.constantOffsetSD > 0:
+            input = batch.input
+            offset_input = input + (
+                torch.randn([input.shape[0], 1, input.shape[2]], device=input.device)
+                * self.config.constantOffsetSD
+            )
+            batch.input = offset_input
+        return batch
+
     def _train_epoch(self, data_loader: DataLoader):
-        self.model.train()
+        model = self._get_train_model()
+        model.train()
         scaler = torch.GradScaler(device=self.device)
         evaluator = self.experiment.create_evaluator("train")
 
@@ -75,36 +106,21 @@ class Trainer:
             with torch.autocast(
                 device_type=self.device, dtype=torch.float16, enabled=self.config.amp
             ):
-                if self.config.whiteNoiseSD > 0:
-                    input = batch.input
-                    noised_input = input + (
-                        torch.randn(input.shape, device=input.device)
-                        * self.config.whiteNoiseSD
-                    )
-                    batch.input = noised_input
-
-                if self.config.constantOffsetSD > 0:
-                    input = batch.input
-                    offset_input = input + (
-                        torch.randn(
-                            [input.shape[0], 1, input.shape[2]], device=input.device
-                        )
-                        * self.config.constantOffsetSD
-                    )
-                    batch.input = offset_input
+                batch.target = self._preprocess_labels(batch)
+                batch = self._augment_batch(batch)
 
                 # Make predictions for this batch
                 with torch.enable_grad():
                     # calculate gradient for whole model (but only optimize parts)
-                    outputs = self.model.forward(batch)
+                    outputs = model.forward(batch)
 
-            loss = self.model.compute_loss(outputs, batch)
+            loss = model.compute_loss(outputs, batch)
 
             scaler.scale(loss.loss).backward()
 
             if self.config.gradient_clipping is not None:
                 torch.nn.utils.clip_grad_norm_(  # type: ignore
-                    self.model.parameters(), self.config.gradient_clipping
+                    model.parameters(), self.config.gradient_clipping
                 )
 
             # Adjust learning weights
@@ -121,17 +137,21 @@ class Trainer:
         evaluator.clean_up()
         return results
 
+    def _after_epoch_complete(self, epoch: int):
+        return
+
     def evaluate_epoch(self, mode: Literal["val", "test"]):
         dataloader = self.dataloader_val if mode == "val" else self.dataloader_test
-        self.model.eval()
+        model = self._get_eval_model()
+        model.eval()
         evaluator = self.experiment.create_evaluator(mode)
 
         for i, batch in enumerate(dataloader):
             batch = cast(Batch, batch).to(self.device)
 
             with torch.no_grad():
-                outputs = self.model.forward(batch)
-            loss = self.model.compute_loss(outputs, batch)
+                outputs = model.forward(batch)
+            loss = model.compute_loss(outputs, batch)
             evaluator.track_batch(outputs, loss, batch)
             if (
                 i % self.config.log_every_n_batches
@@ -191,6 +211,8 @@ class Trainer:
             print(f"\nEpoch {epoch + 1}/{self.config.epochs}")
 
             train_losses = self._train_epoch(self.dataloader_train)
+            self._after_epoch_complete(epoch)
+
             val_losses = self.evaluate_epoch("val")
             self.scheduler.step()
 
@@ -212,7 +234,7 @@ class Trainer:
                 )
                 if is_better:
                     best_model_val_metric = curr_epoch_val_metric
-                    torch.save(self.model.state_dict(), best_model_path)
+                    self._save_best_model(best_model_path)
                     print(f"\n\nSaving model checkpoint at {best_model_path}\n")
                     best_model_epoch = epoch
 
@@ -243,8 +265,17 @@ class Trainer:
                 print("Early stopping due to user interrupt")
                 break
 
+        return self._load_best_model_and_test(
+            history, best_model_path, best_model_epoch
+        )
+
+    def _save_best_model(self, best_model_path):
+        torch.save(self._get_eval_model().state_dict(), best_model_path)
+
+    def _load_best_model_and_test(self, history, best_model_path, best_model_epoch):
         if self.config.return_best_model:
-            self.model.load_state_dict(torch.load(best_model_path))
+            model = self._get_eval_model()
+            model.load_state_dict(torch.load(best_model_path))
             os.remove(best_model_path)
             os.rmdir(os.path.dirname(best_model_path))
             print("Loaded model with best validation loss of this experiment from disk")
@@ -252,4 +283,6 @@ class Trainer:
         test_losses = self.evaluate_epoch("test")
         wandb.log(self._get_wandb_metrics(test_losses, "test"))
         print(f"\nTest loss ({self.loss_name}): {test_losses.get_average().loss}")
-        return self.model, TrainHistory(history, test_losses, best_model_epoch)
+        return (
+            model if self.config.return_best_model else self._get_eval_model()  # type: ignore
+        ), TrainHistory(history, test_losses, best_model_epoch)

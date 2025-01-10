@@ -1,0 +1,35 @@
+program: run.py
+method: bayes
+name: self_learning_ema_decay
+entity: machine-learning-hpi
+project: mp-lippert
+run_cap: 50
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
+  - --use_wandb=true
+  - --experiment_id=self_learning_experiment
+  - --learning_rate=0.0003
+  - --image_encoder_lr=0.000025
+  - --mask_decoder_lr=0.00005
+  - --prompt_encoder_lr=0.00015
+  - --sam_model=vit_b
+  - --batch_size=4
+  - --secondary_batch_size=4
+  - --epochs=10
+  - --weight_decay=1e-4
+  - --warmup_epochs=5
+  - --gamma=0.85
+  - --step_size=2
+  - --best_model_metric=IoU
+  - --minimize_best_model_metric=false
+  - --from_checkpoint=/dhc/home/leon.hermann/MP/mp-lippert-experiments/results/multi_ds_vessel_experiment/2024-12-27_17#55#52/model.pt
+metric:
+  name: test_dice+bce_loss
+  goal: minimize
+parameters:
+  ema_decay_origin:
+    min: 0.0
+    max: 0.999
