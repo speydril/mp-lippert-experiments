@@ -24,7 +24,8 @@ class UkBiobankDatasetArgs(BaseModel):
         "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
     )
     pseudo_labels_dir: Optional[str] = Field(
-        description="Name of the the directory containing the pseudo labels with pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png"
+        default=None,
+        description="Name of the the directory containing the pseudo labels to be filled into pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png",
     )
 
 
@@ -189,7 +190,7 @@ class UkBiobankDataset(BaseDataset):
                 assert self.config.pseudo_labels_dir is not None
                 mask_folder = (
                     Path(self.yaml_config.ukbiobank_masks_dir)
-                    / f"v{self.config.pseudo_labels_dir}"
+                    / self.config.pseudo_labels_dir
                     / "generated_masks"
                 )
                 return [
