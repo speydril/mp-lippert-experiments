@@ -10,9 +10,11 @@ from pathlib import Path
 
 yaml_config = YamlConfig().config
 # Mask output path
-iteration = 0
-output_path = Path(yaml_config.ukbiobank_masks_dir) / f"v{iteration}"
-model_checkpoint = "/dhc/groups/mp2024cl2/results/multi_ds_vessel_experiment/reference_flashattn_waria/model.pt"
+directory = "teacher_20_samples"
+output_path = Path(yaml_config.ukbiobank_masks_dir) / directory
+model_checkpoint = (
+    "/dhc/groups/mp2024cl2/results/multi_ds_vessel_experiment/20_samples/model.pt"
+)
 filter_threshold = yaml_config.filter_threshold
 # Setup configs
 sam_config = AutoSamModelArgs(
