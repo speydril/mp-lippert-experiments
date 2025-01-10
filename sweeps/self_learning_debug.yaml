@@ -1,0 +1,38 @@
+program: run.py
+method: bayes
+name: self_learning_mnist
+entity: machine-learning-hpi
+project: mp-lippert
+run_cap: 200
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
+  - --use_wandb=true
+  - --experiment_id=self_learning_experiment_debug
+  - --use_cuda=true
+  - --batch_size=64
+  - --hidden_sizes=[128,64]
+  - --epochs=50
+  - --labeled_limit=200
+  - --from_checkpoint=results/mnist_experiment/2025-01-08_15#52#38/model.pt
+metric:
+  name: test_ce_loss
+  goal: minimize
+parameters:
+  weight_decay:
+    min: 0.0
+    max: 0.001
+  gamma:
+    min: 0.2
+    max: 1.0
+  learning_rate:
+    min: 0.000001
+    max: 0.1
+  whiteNoiseSD:
+    min: 0.0
+    max: 1.0
+  ema_decay:
+    min: 0.1
+    max: 1.0

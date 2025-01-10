@@ -1,9 +1,7 @@
-import os
 from typing import cast
 
 import numpy as np
 import torch
-import wandb
 
 
 from src.models.auto_sam_model import norm_batch
@@ -40,17 +38,17 @@ class SelfTrainer(Trainer):
         self.experiment.teacher_model.eval()
         return norm_batch(self.experiment.teacher_model.forward(batch).logits)
 
-    def _after_epoch_complete(self, epoch: int):
+    def _after_batch_complete(self, iter: int):
+        if self.experiment.config.constant_ema_decay:
+            teacher_ratio = self.experiment.config.ema_decay
+        else:
+            teacher_ratio = max(self.experiment.config.ema_decay, 1 - (1 / (iter + 1)))
+
         # Adjust weights of teacher model
         with torch.no_grad():  # Disable gradient tracking
-            linear = 1 - 1 / (epoch + 1)
-            ema_decay = max(
-                self.experiment.config.minimum_student_ratio,
-                min(self.experiment.config.maximum_student_ratio, linear),
-            )
             for t_params, s_params in zip(
                 self.experiment.teacher_model.parameters(), self.model.parameters()
             ):
                 t_params.data = (
-                    ema_decay * t_params.data + (1 - ema_decay) * s_params.data
+                    teacher_ratio * t_params.data + (1 - teacher_ratio) * s_params.data
                 )

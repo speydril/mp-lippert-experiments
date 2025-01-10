@@ -1,14 +1,11 @@
 import os
 import uuid
 from typing import Literal, cast
-
-from matplotlib.pyplot import sca
 import numpy as np
 import torch
 import wandb
 from torch.utils.data import DataLoader
 
-from src.models.base_model import Loss
 from src.datasets.base_dataset import Batch
 from src.experiments.base_experiment import BaseExperiment
 from src.train.evaluator import Evaluator
@@ -94,7 +91,7 @@ class Trainer:
             batch.input = offset_input
         return batch
 
-    def _train_epoch(self, data_loader: DataLoader):
+    def _train_epoch(self, epoch: int, data_loader: DataLoader):
         model = self._get_train_model()
         model.train()
         scaler = torch.GradScaler(device=self.device)
@@ -127,6 +124,8 @@ class Trainer:
             scaler.step(self.optimizer)
             scaler.update()
 
+            self._after_batch_complete(epoch * len(data_loader) + i)
+
             evaluator.track_batch(outputs, loss, batch)
             if (
                 i % self.config.log_every_n_batches
@@ -136,6 +135,9 @@ class Trainer:
         results = evaluator.evaluate()
         evaluator.clean_up()
         return results
+
+    def _after_batch_complete(self, iter: int):
+        return
 
     def _after_epoch_complete(self, epoch: int):
         return
@@ -210,7 +212,7 @@ class Trainer:
         for epoch in range(self.config.epochs):
             print(f"\nEpoch {epoch + 1}/{self.config.epochs}")
 
-            train_losses = self._train_epoch(self.dataloader_train)
+            train_losses = self._train_epoch(epoch, self.dataloader_train)
             self._after_epoch_complete(epoch)
 
             val_losses = self.evaluate_epoch("val")
@@ -280,7 +282,9 @@ class Trainer:
             os.rmdir(os.path.dirname(best_model_path))
             print("Loaded model with best validation loss of this experiment from disk")
 
+        val_losses = self.evaluate_epoch("val")
         test_losses = self.evaluate_epoch("test")
+        wandb.log(self._get_wandb_metrics(val_losses, "val"))
         wandb.log(self._get_wandb_metrics(test_losses, "test"))
         print(f"\nTest loss ({self.loss_name}): {test_losses.get_average().loss}")
         return (

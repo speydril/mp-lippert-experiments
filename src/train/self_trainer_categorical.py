@@ -1,8 +1,4 @@
-from math import floor
-from typing import cast
 import torch
-from torch.utils.data import DataLoader
-from src.models.base_model import ModelOutput
 from src.datasets.base_dataset import Batch
 from src.train.self_trainer import SelfTrainer
 

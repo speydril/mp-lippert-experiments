@@ -1,13 +1,10 @@
-from math import floor
 from typing import Literal, Any, Optional, Type
-from click import prompt
 import torch
 from torch.optim.optimizer import Optimizer
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
 )
-from torch.utils.data import DataLoader
 from src.datasets.ukbiobank_dataset import UkBiobankDataset, UkBiobankDatasetArgs
 from src.models.auto_sam_model import AutoSamModel, AutoSamModelArgs
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
@@ -17,7 +14,6 @@ from src.datasets.base_dataset import BaseDataset
 from src.optimizers.adam import AdamArgs
 from src.schedulers.step_lr import StepLRArgs, create_steplr_scheduler
 from typing import cast
-import os
 from pydantic import Field
 
 
@@ -41,12 +37,10 @@ class SelfLearningExperimentArgs(
     prompt_encoder_lr: Optional[float] = Field(
         default=None, description="Learning rate for prompt encoder"
     )
-    minimum_student_ratio: float = Field(
-        default=0.1, description="Exponential moving average decay"
+    ema_decay: float = Field(
+        default=0.999, description="Exponential moving average decay"
     )
-    maximum_student_ratio: float = Field(
-        default=0.5, description="Exponential moving average decay"
-    )
+    constant_ema_decay: bool = Field(default=True, description="Use constant EMA decay")
 
 
 class SelfLearningExperiment(BaseExperiment):
@@ -86,7 +80,7 @@ class SelfLearningExperiment(BaseExperiment):
             )
         else:
             return JoinedRetinaDataset.from_config(
-                self.config, self.yaml_config
+                self.config, self.yaml_config, 1
             ).get_split(split)
 
     def _create_model(self) -> BaseModel:

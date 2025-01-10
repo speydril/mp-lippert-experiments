@@ -1,19 +1,17 @@
 from typing import Literal, Any
 import torch
 from torch.optim.optimizer import Optimizer
+from src.schedulers.step_lr import StepLRArgs
 from src.experiments.self_learning_experiment import (
     SelfLearningExperiment,
-    SelfLearningExperimentArgs,
 )
 from src.datasets.mnist_dataset import MnistDataset, MnistDatasetArgs
 from src.models.mnist_fc_model import MnistFcModel, MnistFcModelArgs
-from torch.utils.data import DataLoader
-from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
+from src.experiments.base_experiment import BaseExperimentArgs
 from src.models.base_model import BaseModel
 from src.args.yaml_config import YamlConfigModel
 from src.datasets.base_dataset import BaseDataset
 from src.optimizers.adam import AdamArgs, create_adam_optimizer
-from src.schedulers.step_lr import StepLRArgs, create_steplr_scheduler
 from pydantic import Field
 
 
@@ -23,12 +21,10 @@ class SelfLearningExperimentDebugArgs(
     labeled_limit: int = Field(
         default=1000, description="Number of labeled samples to use"
     )
-    minimum_student_ratio: float = Field(
-        default=0.1, description="Exponential moving average decay"
+    ema_decay: float = Field(
+        default=0.999, description="Exponential moving average decay"
     )
-    maximum_student_ratio: float = Field(
-        default=0.5, description="Exponential moving average decay"
-    )
+    constant_ema_decay: bool = Field(default=True, description="Use constant EMA decay")
 
 
 class SelfLearningExperimentDebug(SelfLearningExperiment):

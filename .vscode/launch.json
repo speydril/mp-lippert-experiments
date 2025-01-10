@@ -8,7 +8,16 @@
             "console": "integratedTerminal",
             "args": [
                 "--experiment_id=mnist",
-                "--use_cuda=false"
+                "--use_cuda=true",
+                "--batch_size=64",
+                "--hidden_sizes=[128,64]",
+                "--learning_rate=0.001",
+                "--epochs=50",
+                "--early_stopping_patience=10",
+                "--gamma=0.8",
+                "--weight_decay=1e-4",
+                "--whiteNoiseSD=0.3",
+                "--limit=200"
             ]
         },
         {
@@ -190,6 +199,27 @@
                 "--filter_scores_filepath=/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions_224.csv",
                 "--sam_model=vit_b"
             ]
-        }
+        },
+        {
+            "name": "Self learning with MNIST (config from hyperparameter search)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--ema_decay=0.7587111917723846",
+                "--gamma=0.9096201820785584",
+                "--learning_rate=0.002098145863796271",
+                "--weight_decay=0.0008981945512522568",
+                "--whiteNoiseSD=0.4733512968149821",
+                "--experiment_id=self_learning_experiment_debug",
+                "--use_cuda=true",
+                "--batch_size=256",
+                "--hidden_sizes=[128,64]",
+                "--epochs=50",
+                "--labeled_limit=200",
+                "--from_checkpoint=results/mnist_experiment/2025-01-08_15#52#38/model.pt",
+            ]
+        },
     ]
 }
