@@ -80,7 +80,7 @@ class JoinedDataset(BaseDataset):
         if collate is not None:
             self.get_collate_fn = lambda: collate
         self.collate = collate
-        self.index_map = list(range(len(self)))
+        self.index_map = list(range(self._get_total_n_samples()))
         random.seed(seed)
         random.shuffle(self.index_map)
         self.seed = seed
@@ -100,6 +100,9 @@ class JoinedDataset(BaseDataset):
         raise IndexError("Index out of range")
 
     def __len__(self) -> int:
+        return self._get_total_n_samples()
+
+    def _get_total_n_samples(self):
         return sum(len(dataset) for dataset in self.datasets)
 
     def get_split(self, split: Literal["train", "val", "test"]) -> Self:
