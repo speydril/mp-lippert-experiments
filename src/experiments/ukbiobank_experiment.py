@@ -48,6 +48,7 @@ class UkBiobankExperimentArgs(
     filter_scores_filepath: str = (
         "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
     )
+    limit: Optional[int] = None
 
 
 class UkBioBankExperiment(BaseExperiment):
@@ -59,6 +60,7 @@ class UkBioBankExperiment(BaseExperiment):
             val_percentage=0.0,
             test_percentage=0.0,
             filter_scores_filepath=self.config.filter_scores_filepath,
+            limit=self.config.limit,
         )
         self.biobank = UkBiobankDataset(
             config=biobank_config,

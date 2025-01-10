@@ -27,6 +27,8 @@ class UkBiobankDatasetArgs(BaseModel):
         default=None,
         description="Name of the the directory containing the pseudo labels to be filled into pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png",
     )
+    limit: Optional[int] = None
+
 
 
 @dataclass
@@ -58,7 +60,6 @@ class UkBiobankDataset(BaseDataset):
         config: UkBiobankDatasetArgs,
         yaml_config: YamlConfigModel,
         samples: Optional[list[BiobankSampleReference]] = None,
-        image_enc_img_size=1024,
         with_masks=False,
         augment_inputs=False,
     ):
@@ -66,12 +67,13 @@ class UkBiobankDataset(BaseDataset):
         self.yaml_config = yaml_config
         self.with_masks = with_masks
         self.samples = self.load_data() if samples is None else samples
+        self.samples = self.samples if config.limit is None else self.samples[:config.limit]
         pixel_mean, pixel_std = (
             self.yaml_config.fundus_pixel_mean,
             self.yaml_config.fundus_pixel_std,
         )
         self.sam_trans = ResizeLongestSide(
-            image_enc_img_size,
+            self.yaml_config.fundus_resize_img_size,
             pixel_mean=pixel_mean,
             pixel_std=pixel_std,
         )

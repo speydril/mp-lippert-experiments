@@ -13,6 +13,7 @@ import os
 class MnistDatasetArgs(BaseModel):
     """Define arguments for the dataset here, i.e. preprocessing related stuff etc"""
 
+    limit: Optional[int] = None
     pass
 
 
@@ -22,45 +23,25 @@ class MnistDataset(BaseDataset):
         config: MnistDatasetArgs,
         yaml_config: YamlConfigModel,
         samples: Optional[list[Sample]] = None,
+        split: Literal["train", "val", "test"] = "train",
     ):
         self.yaml_config = yaml_config
         self.config = config
-        self.samples = self.load_data() if samples is None else samples
+        self.samples = self.load_data(split) if samples is None else samples
+        self.split = split
 
     def __getitem__(self, index: int) -> Sample:
         return self.samples[index]
 
     def __len__(self):
+        if self.config.limit and self.split == "train":
+            return self.config.limit
         return len(self.samples)
 
-    def get_split(self, split: Literal["train", "val", "test"]) -> Self:
-        index_offset = (
-            0
-            if split == "train"
-            else (
-                floor(len(self.samples) * 0.8)
-                if split == "val"
-                else floor(len(self.samples) * 0.95)
-            )
-        )
-        length = (
-            floor(len(self.samples) * 0.8)
-            if split == "train"
-            else (
-                floor(len(self.samples) * 0.15)
-                if split == "val"
-                else floor(len(self.samples) * 0.05)
-            )
-        )
-        return self.__class__(
-            self.config,
-            self.yaml_config,
-            self.samples[index_offset : index_offset + length],
-        )
-
-    def load_data(self):
+    def load_data(self, split: Literal["train", "val", "test"]) -> list[Sample]:
         mnist_data = MNIST(
             os.path.join(self.yaml_config.cache_dir, "mnist"),
+            train=split == "train",
             download=True,
         )
         image_transform = transforms.Compose(
@@ -71,7 +52,15 @@ class MnistDataset(BaseDataset):
         )
         labels_matrix = torch.eye(10)
         target_transform = transforms.Lambda(lambda y: labels_matrix[y])
-        return [
+        samples = [
             Sample(image_transform(image), target_transform(target))
             for image, target in mnist_data
         ]
+
+        if split == "train":
+            return samples
+        else:
+            if split == "val":
+                return samples[: floor(0.5 * len(samples))]
+            else:
+                return samples[floor(0.5 * len(samples)) :]
