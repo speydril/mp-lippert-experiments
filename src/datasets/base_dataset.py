@@ -1,12 +1,12 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple, Optional, Literal, Iterator, Tuple
+from typing import Any, Callable, Optional, Literal, Tuple
 from typing_extensions import Self
 
 import torch
 from torch.utils.data import Dataset
 from torch._prims_common import DeviceLikeType
-from pydantic import BaseModel
+import random
 
 
 @dataclass
@@ -70,14 +70,25 @@ class BaseDataset(Dataset):
 
 
 class JoinedDataset(BaseDataset):
-    def __init__(self, datasets: list[BaseDataset], collate: Optional[Callable] = None):
+    def __init__(
+        self,
+        datasets: list[BaseDataset],
+        collate: Optional[Callable] = None,
+        seed: Optional[int] = None,
+    ):
         self.datasets = datasets
         if collate is not None:
             self.get_collate_fn = lambda: collate
         self.collate = collate
+        self.index_map = list(range(self._get_total_n_samples()))
+        random.seed(seed)
+        random.shuffle(self.index_map)
+        self.seed = seed
 
     def __getitem__(self, index: int) -> Sample:
-        dataset_index, sample_index = self.get_dataset_and_sample_index(index)
+        dataset_index, sample_index = self.get_dataset_and_sample_index(
+            self.index_map[index]
+        )
         return self.datasets[dataset_index][sample_index]
 
     def get_dataset_and_sample_index(self, index: int) -> Tuple[int, int]:
@@ -89,9 +100,14 @@ class JoinedDataset(BaseDataset):
         raise IndexError("Index out of range")
 
     def __len__(self) -> int:
+        return self._get_total_n_samples()
+
+    def _get_total_n_samples(self):
         return sum(len(dataset) for dataset in self.datasets)
 
     def get_split(self, split: Literal["train", "val", "test"]) -> Self:
         return self.__class__(
-            [dataset.get_split(split) for dataset in self.datasets], self.collate
+            [dataset.get_split(split) for dataset in self.datasets],
+            self.collate,
+            self.seed,
         )

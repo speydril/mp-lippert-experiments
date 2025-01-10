@@ -10,7 +10,7 @@ import cv2
 from typing_extensions import Self
 from src.args.yaml_config import YamlConfigModel
 from src.datasets.base_dataset import BaseDataset, Batch, Sample
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.util.polyp_transform import get_polyp_transform
 from src.models.segment_anything.utils.transforms import ResizeLongestSide
@@ -23,8 +23,12 @@ class UkBiobankDatasetArgs(BaseModel):
     filter_scores_filepath: str = (
         "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
     )
-    mask_iteration: int = 0
+    pseudo_labels_dir: Optional[str] = Field(
+        default=None,
+        description="Name of the the directory containing the pseudo labels to be filled into pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png",
+    )
     limit: Optional[int] = None
+
 
 
 @dataclass
@@ -93,11 +97,7 @@ class UkBiobankDataset(BaseDataset):
     def get_sample_from_file(self, file_ref: BiobankSampleReference):
         train_transform, test_transform = get_polyp_transform()
 
-        augmentations = (
-            train_transform
-            if self.augment_inputs
-            else test_transform
-        )
+        augmentations = train_transform if self.augment_inputs else test_transform
         image = self.cv2_loader(str(file_ref.img_path), is_mask=False)
         gt = (
             self.cv2_loader(str(file_ref.gt_path), is_mask=True)
@@ -166,7 +166,7 @@ class UkBiobankDataset(BaseDataset):
                 else floor(len(self.samples) * self.config.test_percentage)
             )
         )
-        
+
         return self.__class__(
             self.config,
             self.yaml_config,
@@ -176,12 +176,7 @@ class UkBiobankDataset(BaseDataset):
         )
 
     def load_data(self) -> list[BiobankSampleReference]:
-        sample_folder = Path(self.yaml_config.ukbiobank_data_dir)
-        mask_folder = (
-            Path(self.yaml_config.ukbiobank_masks_dir)
-            / f"v{self.config.mask_iteration}"
-            / "generated_masks"
-        )
+
         filter_scores_filepath = Path(self.config.filter_scores_filepath)
 
         selected_samples = []
@@ -192,12 +187,22 @@ class UkBiobankDataset(BaseDataset):
                 if float(pos_prob) >= self.yaml_config.filter_threshold:
                     selected_samples.append(path)
 
-        sample_paths = [
-            (path, mask_folder / path.split("/")[-1] if self.with_masks else None)
-            for path in selected_samples
-            if path.endswith(".png")
-        ]
-        
+        def get_sample_paths():
+            if self.with_masks:
+                assert self.config.pseudo_labels_dir is not None
+                mask_folder = (
+                    Path(self.yaml_config.ukbiobank_masks_dir)
+                    / self.config.pseudo_labels_dir
+                    / "generated_masks"
+                )
+                return [
+                    (path, mask_folder / path.split("/")[-1])
+                    for path in selected_samples
+                    if path.endswith(".png")
+                ]
+            return [(path, None) for path in selected_samples if path.endswith(".png")]
+
+        sample_paths = get_sample_paths()
         return [
             BiobankSampleReference(img_path=img_path, gt_path=gt_path)
             for img_path, gt_path in sample_paths

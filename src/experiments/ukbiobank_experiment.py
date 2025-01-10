@@ -41,7 +41,9 @@ class UkBiobankExperimentArgs(
     prompt_encoder_lr: Optional[float] = Field(
         default=None, description="Learning rate for prompt encoder"
     )
-    mask_iteration: int = 0
+    pseudo_labels_dir: str = Field(
+        description="Name of the the directory containing the pseudo labels with pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png"
+    )
     augment_train: bool = True
     filter_scores_filepath: str = (
         "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
@@ -53,7 +55,7 @@ class UkBioBankExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = UkBiobankExperimentArgs(**config)
         biobank_config = UkBiobankDatasetArgs(
-            mask_iteration=self.config.mask_iteration,
+            pseudo_labels_dir=self.config.pseudo_labels_dir,
             train_percentage=1.0,
             val_percentage=0.0,
             test_percentage=0.0,
@@ -66,7 +68,9 @@ class UkBioBankExperiment(BaseExperiment):
             with_masks=True,
             augment_inputs=self.config.augment_train,
         )
-        self.joined_retina = JoinedRetinaDataset.from_config(self.config, yaml_config)
+        self.joined_retina = JoinedRetinaDataset.from_config(
+            self.config, yaml_config, self.config.seed
+        )
         super().__init__(config, yaml_config)
         assert (
             self.config.drive_test_equals_val is False
