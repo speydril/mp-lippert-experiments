@@ -80,7 +80,7 @@ class SelfLearningExperiment(BaseExperiment):
             )
         else:
             return JoinedRetinaDataset.from_config(
-                self.config, self.yaml_config, 1
+                self.config, self.yaml_config, self.config.seed
             ).get_split(split)
 
     def _create_model(self) -> BaseModel:

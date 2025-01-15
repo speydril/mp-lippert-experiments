@@ -96,7 +96,7 @@
             ]
         },
         {
-            "name": "Run.py with multi_ds_vessel",
+            "name": "Tune prompt encoder multi_ds_vessel",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/run.py",
@@ -105,15 +105,43 @@
                 "--experiment_id=multi_ds_vessel",
                 "--sam_model=vit_b",
                 "--learning_rate=0.0003",
+                "--prompt_encoder_lr=0.003",
+                "--image_encoder_lr=0.0",
+                "--mask_decoder_lr=0.0",
                 "--batch_size=3",
-                "--epochs=100",
+                "--epochs=30",
                 "--weight_decay=1e-4",
                 "--early_stopping_patience=10",
                 "--visualize_n_segmentations=5",
-                "--gamma=0.85",
-                "--step_size=5",
+                "--gamma=0.9",
+                "--step_size=1",
                 "--best_model_metric=IoU",
                 "--minimize_best_model_metric=false"
+            ]
+        },
+        {
+            "name": "Tune whole model multi_ds_vessel",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--experiment_id=multi_ds_vessel",
+                "--sam_model=vit_b",
+                "--learning_rate=0.0003",
+                "--prompt_encoder_lr=0.0001",
+                "--image_encoder_lr=0.00001",
+                "--mask_decoder_lr=0.0001",
+                "--batch_size=3",
+                "--epochs=50",
+                "--weight_decay=1e-4",
+                "--early_stopping_patience=10",
+                "--visualize_n_segmentations=5",
+                "--gamma=0.95",
+                "--step_size=3",
+                "--best_model_metric=IoU",
+                "--minimize_best_model_metric=false",
+                "--prompt_encoder_checkpoint=results/multi_ds_vessel_experiment/2025-01-10_17#49#28/prompt_encoder.pt"
             ]
         },
         {

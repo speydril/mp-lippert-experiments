@@ -1,0 +1,36 @@
+program: run.py
+method: bayes
+name: self_learning_biobank
+entity: machine-learning-hpi
+project: mp-lippert
+run_cap: 100
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
+  - --use_wandb=true
+  - --experiment_id=self_learning_experiment
+  - --sam_model=vit_b
+  - --batch_size=12
+  - --epochs=10
+  - --limit=5000
+  - --best_model_metric=IoU
+  - --minimize_best_model_metric=false
+  - --from_checkpoint=/dhc/home/leon.hermann/MP/mp-lippert-experiments/results/multi_ds_vessel_experiment/2025-01-10_18#54#32/model.pt
+metric:
+  name: test_IoU
+  goal: maximize
+parameters:
+  learning_rate:
+    min: 0.000001
+    max: 0.001
+  ema_decay:
+    min: 0.0
+    max: 0.999
+  weight_decay:
+    min: 0.0
+    max: 0.1
+  gamma:
+    min: 0.5
+    max: 1.0
