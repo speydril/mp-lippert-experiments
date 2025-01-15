@@ -27,6 +27,7 @@ class BaseExperimentArgs(PDBaseModel):
     )
     epochs: int = 10
     wandb_experiment_name: str = "experiment_1"
+    wandb_tags: list[str] = Field([], description="Tags for wandb experiment")
     experiment_id: str = Field(
         description="Type identifier of experiment to run. Experiment is selected from experiment_registry"
     )
@@ -54,7 +55,7 @@ class BaseExperimentArgs(PDBaseModel):
     seed: int = 42
     early_stopping_patience: Optional[int] = Field(
         default=None,
-        description="Number of epochs n to consider for early stopping. Once all n-1 last epochs did not improve compared to the -nth epoch, training is stopped.   If None, early stopping is disabled",
+        description="Number of epochs n to consider for early stopping. Once all n-1 last epochs did not improve compared to the -nth epoch, training is stopped. If None, early stopping is disabled",
     )
     early_stopping_delta: float = Field(
         default=0.0001,
@@ -134,6 +135,7 @@ class BaseExperiment(metaclass=ABCMeta):
             project=self.yaml_config.wandb_project_name,
             entity=self.yaml_config.wandb_entity,
             config=self._get_config_for_logging(),
+            tags=self.base_config.wandb_tags,
             name=self.base_config.wandb_experiment_name,
             dir=self.yaml_config.cache_dir,
             save_code=True,
