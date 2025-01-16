@@ -101,7 +101,7 @@ class ResizeLongestSide:
         if len(x.shape) == 2:
             pass
         else:
-            x = (x - self.pixel_mean) / self.pixel_std
+            # x = (x - self.pixel_mean) / self.pixel_std
             # x = x / 255
             pass
 

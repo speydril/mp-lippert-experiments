@@ -49,17 +49,16 @@ class ARIADataset(BaseDataset):
         self.yaml_config = yaml_config
         self.config = config
         self.samples = self.load_data() if samples is None else samples
-        pixel_mean, pixel_std = (
-            self.yaml_config.fundus_pixel_mean,
-            self.yaml_config.fundus_pixel_std,
-        )
+        self.pixel_mean = self.yaml_config.fundus_pixel_mean 
+        self.pixel_std = tuple([s*s for s in self.yaml_config.fundus_pixel_std])
+        
         self.sam_trans = ResizeLongestSide(
-            self.yaml_config.fundus_resize_img_size, pixel_mean, pixel_std
+            self.yaml_config.fundus_resize_img_size,
         )
 
     def __getitem__(self, index: int) -> ARIASample:
         sample = self.samples[index]
-        train_transform, test_transform = get_polyp_transform()
+        train_transform, test_transform = get_polyp_transform(self.pixel_mean, self.pixel_std)
 
         augmentations = test_transform
 

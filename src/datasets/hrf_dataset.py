@@ -46,19 +46,16 @@ class HrfDataset(BaseDataset):
         self.yaml_config = yaml_config
         self.config = config
         self.samples = self.load_data() if samples is None else samples
-        pixel_mean, pixel_std = (
-            self.yaml_config.fundus_pixel_mean,
-            self.yaml_config.fundus_pixel_std,
-        )
+        self.pixel_mean = self.yaml_config.fundus_pixel_mean 
+        self.pixel_std = tuple([s*s for s in self.yaml_config.fundus_pixel_std])
+        
         self.sam_trans = ResizeLongestSide(
             self.yaml_config.fundus_resize_img_size,
-            pixel_mean=pixel_mean,
-            pixel_std=pixel_std,
         )
 
     def __getitem__(self, index: int) -> HrfSample:
         sample = self.samples[index]
-        train_transform, test_transform = get_polyp_transform()
+        train_transform, test_transform = get_polyp_transform(self.pixel_mean, self.pixel_std)
 
         augmentations = train_transform if sample.split == "train" else test_transform
 

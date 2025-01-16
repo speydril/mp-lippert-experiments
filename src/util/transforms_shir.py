@@ -14,6 +14,7 @@ import numbers
 import types
 import collections
 import warnings
+import cv2
 
 from torchvision.transforms import functional as F
 
@@ -491,3 +492,55 @@ class RandomAffine(object):
         ret = self.get_params(self.degrees, self.translate, self.scale, self.shear, img.size)
         return F.affine(img, *ret, interpolation=Image.BILINEAR, fill=self.fillcolor), \
                F.affine(mask, *ret, interpolation=Image.NEAREST, fill=self.fillcolor)
+    
+class RandomGamma(object):
+    def __init__(self, gamma=(0.5, 1.5), gain=1):
+        self.gamma = gamma
+        self.gain = gain
+
+    def __call__(self, img, mask):
+        gamma = random.uniform(self.gamma[0], self.gamma[1])
+        return F.adjust_gamma(img, gamma, self.gain), mask
+
+    @staticmethod
+    def get_params(gamma):
+        return random.uniform(gamma[0], gamma[1])
+    
+class RandomContrast(object):
+    def __init__(self, contrast=(0.5, 1.5)):
+        self.contrast = contrast
+
+    def __call__(self, img, mask):
+        contrast = random.uniform(self.contrast[0], self.contrast[1])
+        return F.adjust_contrast(img, contrast), mask
+
+    @staticmethod
+    def get_params(contrast):
+        return random.uniform(contrast[0], contrast[1])
+    
+class CLAHE(object):
+    '''Apply Contrast Limited Adaptive Histogram Equalization (CLAHE) to the input image.
+
+    CLAHE is an advanced method of improving the contrast in an image. Unlike regular histogram
+    equalization, which operates on the entire image, CLAHE operates on small regions (tiles)
+    in the image. This results in a more balanced equalization, preventing over-amplification
+    of contrast in areas with initially low contrast.
+'''
+    def __init__(self, clip_limit=2.0, tile_grid_size=(8, 8)):
+        self.clip_limit = clip_limit
+        self.tile_grid_size = tile_grid_size
+
+    def __call__(self, img, mask):
+        img = np.array(img)
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=self.tile_grid_size)
+        img[:, :, 0] = clahe.apply(img[:, :, 0])
+        img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
+        return Image.fromarray(img), mask
+    
+class GrayScale(object):
+    def __call__(self, img, mask):
+        return F.to_grayscale(img, num_output_channels=3), mask
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'

@@ -57,11 +57,11 @@ class YamlConfigModel(BaseModel):
         description="The path to the ARIA dataset",
     )
     fundus_pixel_mean: tuple[float, float, float] = Field(
-        default=(133.54903465404846, 53.65591587936669, 21.037014559695596),
+        default=(137.0414251135947, 52.248143158625304, 16.14674818684961),
         description="Mean per color channel of fundus images in train partition of JoinedRetinaDataset (RGB)",
     )
     fundus_pixel_std: tuple[float, float, float] = Field(
-        default=(81.19483977869938, 35.06718212261534, 14.044927086746483),
+        default=(76.30228900492972, 34.27456408088384, 11.371813917784712),
         description="Standard deviation per color channel of fundus images in train partition of JoinedRetinaDataset (RGB)",
     )
     fundus_resize_img_size: int = Field(
