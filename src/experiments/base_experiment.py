@@ -64,6 +64,10 @@ class BaseExperimentArgs(PDBaseModel):
     results_subdir_name: Optional[str] = None
     use_cuda: bool = True
     amp: bool = Field(default=False, description="Use automatic mixed precision")
+    load_history: Optional[bool] = Field(
+        default=None,
+        description="Load history from <checkpoint_directory>/history.json",
+    )
 
 
 class BaseExperiment(metaclass=ABCMeta):
@@ -103,7 +107,7 @@ class BaseExperiment(metaclass=ABCMeta):
             history_path = os.path.join(
                 os.path.dirname(self.base_config.from_checkpoint), "history.json"
             )
-            if os.path.exists(history_path):
+            if os.path.exists(history_path) and self.base_config.load_history == True:
                 print("Attempting to load history from checkpoint")
                 try:
                     self.checkpoint_history = TrainHistory.from_json(history_path)

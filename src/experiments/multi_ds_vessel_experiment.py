@@ -41,6 +41,10 @@ class MultiDSVesselExperimentArgs(
     limit_train_samples: Optional[int] = Field(
         default=None, description="Limit number of training samples"
     )
+    mask_decoder_warmup_epochs: int = Field(
+        default=0,
+        description="Number of epochs to linearly warmup mask decoder lr to mask_decoder_lr value from 0",
+    )
 
 
 class MultiDsVesselExperiment(BaseExperiment):
@@ -121,6 +125,7 @@ class MultiDsVesselExperiment(BaseExperiment):
     def create_scheduler(
         self, optimizer: Optimizer
     ) -> torch.optim.lr_scheduler.LRScheduler:
+
         return create_steplr_scheduler(optimizer, self.config)
 
     def get_loss_name(self) -> str:
