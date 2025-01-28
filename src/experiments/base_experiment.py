@@ -62,6 +62,7 @@ class BaseExperimentArgs(PDBaseModel):
         description="Minimum delta of to be optimized metric that is considered as an improvement for early stopping",
     )
     results_subdir_name: Optional[str] = None
+    run_dir_name: Optional[str] = None
     use_cuda: bool = True
     amp: bool = Field(default=False, description="Use automatic mixed precision")
     load_history: Optional[bool] = Field(
@@ -94,7 +95,11 @@ class BaseExperiment(metaclass=ABCMeta):
         )
         self.results_dir = os.path.join(
             self.get_results_dir(proposed_results_dir),
-            f"{datetime.now():%Y-%m-%d_%H#%M#%S}",
+            (
+                f"{datetime.now():%Y-%m-%d_%H#%M#%S}"
+                if self.base_config.run_dir_name is None
+                else self.base_config.run_dir_name
+            ),
         )
 
         os.makedirs(self.results_dir, exist_ok=True)
