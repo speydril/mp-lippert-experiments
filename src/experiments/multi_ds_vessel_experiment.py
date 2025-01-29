@@ -73,6 +73,7 @@ class MultiDsVesselExperiment(BaseExperiment):
             print(
                 f"loading prompt-encoder model from checkpoint {self.config.prompt_encoder_checkpoint}"
             )
+            assert self.config.use_prompt_encoder is True, "When prompt encoder checkpoint is provided, use_prompt_encoder must be True"
             model.prompt_encoder.load_state_dict(
                 torch.load(self.config.prompt_encoder_checkpoint, map_location="cuda"),
                 strict=True,
@@ -84,20 +85,21 @@ class MultiDsVesselExperiment(BaseExperiment):
         return MultiDSVesselExperimentArgs
 
     def create_optimizer(self) -> Optimizer:
-        prompt_enc_params: dict = {
-            "params": cast(AutoSamModel, self.model).prompt_encoder.parameters(),
-        }
-        if self.config.prompt_encoder_lr is not None:
-            prompt_enc_params["lr"] = self.config.prompt_encoder_lr
-
-        params = [prompt_enc_params]
+        
+        casted_model = cast(AutoSamModel, self.model)
+        params = []
+        if self.config.use_prompt_encoder is not None:
+            prompt_enc_params: dict = {
+                "params":casted_model.prompt_encoder.parameters(),
+            }
+            if self.config.prompt_encoder_lr is not None:
+                prompt_enc_params["lr"] = self.config.prompt_encoder_lr
+            params.append(prompt_enc_params)
 
         if self.config.image_encoder_lr is not None:
             params.append(
                 {
-                    "params": cast(
-                        AutoSamModel, self.model
-                    ).sam.image_encoder.parameters(),
+                    "params": casted_model.sam.image_encoder.parameters(),
                     "lr": self.config.image_encoder_lr,
                 }
             )
@@ -106,7 +108,7 @@ class MultiDsVesselExperiment(BaseExperiment):
         # See bottom of https://chatgpt.com/share/675ae2c8-fff4-800c-8a5b-cecc352df76a
         params.append(
             {
-                "params": cast(AutoSamModel, self.model).sam.mask_decoder.parameters(),
+                "params":casted_model.sam.mask_decoder.parameters(),
                 "lr": (
                     self.config.mask_decoder_lr
                     if self.config.mask_decoder_lr is not None
@@ -133,10 +135,11 @@ class MultiDsVesselExperiment(BaseExperiment):
 
     def store_trained_model(self, trained_model: torch.nn.Module):
         model = cast(AutoSamModel, trained_model)
-        torch.save(
-            model.prompt_encoder.state_dict(),
-            os.path.join(self.results_dir, "prompt_encoder.pt"),
-        )
+        if self.config.use_prompt_encoder:
+            torch.save(
+                model.prompt_encoder.state_dict(),
+                os.path.join(self.results_dir, "prompt_encoder.pt"),
+            )
         torch.save(
             model.state_dict(),
             os.path.join(self.results_dir, "model.pt"),

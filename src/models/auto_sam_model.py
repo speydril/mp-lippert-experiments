@@ -37,6 +37,7 @@ class AutoSamModelArgs(PDBaseModel):
     hard_net_arch: int = 68
     depth_wise: bool = False
     Idim: int = 512
+    use_prompt_encoder: bool = True
 
 
 sam_model_registry = {
@@ -67,24 +68,35 @@ class AutoSamModel(BaseModel[SAMBatch]):
             checkpoint=config.sam_checkpoint
         )
         self.bce_loss = BCELoss()
-        self.prompt_encoder = ModelEmb(
-            hard_net_arch=config.hard_net_arch,
-            depth_wise=config.depth_wise,
-            hard_net_cp=config.hard_net_cp,
+        self.prompt_encoder = (
+            ModelEmb(
+                hard_net_arch=config.hard_net_arch,
+                depth_wise=config.depth_wise,
+                hard_net_cp=config.hard_net_cp,
+            )
+            if config.use_prompt_encoder
+            else torch.nn.Module()
         )
+
         self.config = config
         self.image_encoder_no_grad = image_encoder_no_grad
 
-    def forward(self, batch: SAMBatch) -> ModelOutput:
+    def _call(self, image: torch.Tensor):
         Idim = self.config.Idim
         orig_imgs_small = F.interpolate(
-            batch.input, (Idim, Idim), mode="bilinear", align_corners=True
+            image, (Idim, Idim), mode="bilinear", align_corners=True
         )
-        dense_embeddings = self.prompt_encoder(orig_imgs_small)
-        masks = sam_call(
-            batch.input, self.sam, dense_embeddings, self.image_encoder_no_grad
+        dense_embeddings = (
+            self.prompt_encoder(orig_imgs_small)
+            if self.config.use_prompt_encoder
+            else self.sam.prompt_encoder(points=None, boxes=None, masks=None)[1]
         )
 
+        masks = sam_call(image, self.sam, dense_embeddings, self.image_encoder_no_grad)
+        return masks
+
+    def forward(self, batch: SAMBatch) -> ModelOutput:
+        masks = self._call(batch.input)
         return ModelOutput(masks)
 
     def compute_loss(self, outputs: ModelOutput, batch: SAMBatch) -> Loss:
@@ -158,22 +170,12 @@ class AutoSamModel(BaseModel[SAMBatch]):
         original_size = tuple(img.shape[1:3])
 
         transform = ResizeLongestSide(img_encoder_size, pixel_mean, pixel_std)
-        Idim = self.config.Idim
-
         image_tensor = transform.apply_image_torch(img)
         input_size = tuple(image_tensor.shape[1:3])
         input_images = transform.preprocess(image_tensor).unsqueeze(dim=0).cuda()
 
-        orig_imgs_small = F.interpolate(
-            input_images, (Idim, Idim), mode="bilinear", align_corners=True
-        )
-        dense_embeddings = self.prompt_encoder.forward(orig_imgs_small)
         with torch.no_grad():
-            mask = norm_batch(
-                sam_call(
-                    input_images, self.sam, dense_embeddings, image_encoder_no_grad=True
-                )
-            )
+            mask = norm_batch(self._call(input_images))
 
         mask = self.sam.postprocess_masks(
             mask, input_size=input_size, original_size=original_size
