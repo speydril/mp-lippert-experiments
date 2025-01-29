@@ -1,0 +1,23 @@
+program: online_st_run.py
+method: bayes
+name: self_learning_with_final_finetuning
+entity: machine-learning-hpi
+project: mp-lippert
+run_cap: 100
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
+  - --st_epochs=10
+  - --teacher_checkpoint=/dhc/home/leon.hermann/MP/mp-lippert-experiments/results/multi_ds_vessel_experiment/tuning_full_model/2025-01-25_18#08#59/model.pt
+metric:
+  name: test_IoU
+  goal: maximize
+parameters:
+  st_learning_rate:
+    min: 0.000001
+    max: 0.001
+  ft_learning_rate:
+    min: 0.000001
+    max: 0.001

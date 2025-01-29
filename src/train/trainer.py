@@ -279,7 +279,6 @@ class Trainer:
             model = self._get_eval_model()
             model.load_state_dict(torch.load(best_model_path))
             os.remove(best_model_path)
-            os.rmdir(os.path.dirname(best_model_path))
             print("Loaded model with best validation loss of this experiment from disk")
 
         val_losses = self.evaluate_epoch("val")
