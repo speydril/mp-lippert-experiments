@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import pi
 from typing import Literal, Optional
 
 import torch
@@ -153,7 +154,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
         import cv2
         from .segment_anything.utils.transforms import ResizeLongestSide
 
-        _, test_transform = get_polyp_transform()
+        _, test_transform = get_polyp_transform(mean=pixel_mean, std=pixel_std)
         img, _ = test_transform(image, np.zeros_like(image))
         original_size = tuple(img.shape[1:3])
 
