@@ -73,13 +73,14 @@ if __name__ == "__main__":
 
     with open(filtered_samples_filepath, "r") as f:
         samples = [line.strip().split(",") for line in f.readlines()[1:]]
-    if args.limit:
-        samples = samples[: args.limit]
+
     relevant_filepaths = [
         file_p
         for file_p, neg_prob, pos_prob, predicted_label in samples
         if float(pos_prob) >= filter_threshold
     ]
+    if args.limit:
+        relevant_filepaths = relevant_filepaths[: args.limit]
     masks_out_dir = Path(f"{output_path}/generated_masks")
     masks_out_dir.mkdir(parents=True, exist_ok=True)
     for p in tqdm(relevant_filepaths, miniters=500):
