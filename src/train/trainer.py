@@ -54,12 +54,6 @@ class Trainer:
         self.scheduler = experiment.create_scheduler(self.optimizer)
         self.killer = GracefulKiller()
 
-    def _get_train_model(self):
-        return self.model
-
-    def _get_eval_model(self):
-        return self.model
-
     def _log_intermediate(self, batch: int, n_batches: int, evaluator: Evaluator):
         loss = evaluator.get_latest_loss()
         running = evaluator.get_running_loss()
@@ -92,8 +86,7 @@ class Trainer:
         return batch
 
     def _train_epoch(self, epoch: int, data_loader: DataLoader):
-        model = self._get_train_model()
-        model.train()
+        self.model.train()
         scaler = torch.GradScaler(device=self.device)
         evaluator = self.experiment.create_evaluator("train")
 
@@ -109,15 +102,15 @@ class Trainer:
                 # Make predictions for this batch
                 with torch.enable_grad():
                     # calculate gradient for whole model (but only optimize parts)
-                    outputs = model.forward(batch)
+                    outputs = self.model.forward(batch)
 
-            loss = model.compute_loss(outputs, batch)
+            loss = self.model.compute_loss(outputs, batch, confidence_thresholding=True)
 
             scaler.scale(loss.loss).backward()
 
             if self.config.gradient_clipping is not None:
                 torch.nn.utils.clip_grad_norm_(  # type: ignore
-                    model.parameters(), self.config.gradient_clipping
+                    self.model.parameters(), self.config.gradient_clipping
                 )
 
             # Adjust learning weights
@@ -142,18 +135,17 @@ class Trainer:
     def _after_epoch_complete(self, epoch: int):
         return
 
-    def evaluate_epoch(self, mode: Literal["val", "test"]):
+    def evaluate_epoch(self, mode: Literal["val", "test"]) -> list[SingleEpochHistory]:
         dataloader = self.dataloader_val if mode == "val" else self.dataloader_test
-        model = self._get_eval_model()
-        model.eval()
+        self.model.eval()
         evaluator = self.experiment.create_evaluator(mode)
 
         for i, batch in enumerate(dataloader):
             batch = cast(Batch, batch).to(self.device)
 
             with torch.no_grad():
-                outputs = model.forward(batch)
-            loss = model.compute_loss(outputs, batch)
+                outputs = self.model.forward(batch)
+            loss = self.model.compute_loss(outputs, batch)
             evaluator.track_batch(outputs, loss, batch)
             if (
                 i % self.config.log_every_n_batches
@@ -163,12 +155,15 @@ class Trainer:
 
         results = evaluator.evaluate()
         evaluator.clean_up()
-        return results
+        return [results]
 
-    def _get_wandb_metrics(self, epoch: SingleEpochHistory, prefix: str):
+    def _get_wandb_metrics(
+        self, epoch: SingleEpochHistory | list[SingleEpochHistory], prefix: str
+    ):
         def add_prefix_to_dict_keys(d: dict, prefix: str):
             return {f"{prefix}_{k}": v for k, v in d.items()}
 
+        epoch = epoch if isinstance(epoch, SingleEpochHistory) else epoch[0]
         loss_avg = epoch.get_average()
         epoch_val_metrics = loss_avg.metrics
 
@@ -182,6 +177,21 @@ class Trainer:
         metrics = self._get_wandb_metrics(losses.val_losses, "val")
         metrics.update(self._get_wandb_metrics(losses.train_losses, "train"))
         wandb.log(metrics)
+
+    def get_relevant_metric(
+        self,
+        epoch_hists: SingleEpochHistory | list[SingleEpochHistory],
+    ):
+        epoch_hist = (
+            epoch_hists
+            if isinstance(epoch_hists, SingleEpochHistory)
+            else epoch_hists[0]
+        )
+        return (
+            epoch_hist.get_average().loss
+            if self.config.best_model_metric == "loss"
+            else epoch_hist.get_average().metrics[self.config.best_model_metric]
+        )
 
     def train(self):
         history: list[EpochLosses] = (
@@ -200,18 +210,10 @@ class Trainer:
         )
         os.makedirs(os.path.dirname(best_model_path), exist_ok=True)
 
-        def get_relevant_metric(epoch_hist: SingleEpochHistory):
-            return (
-                epoch_hist.get_average().loss
-                if self.config.best_model_metric == "loss"
-                else epoch_hist.get_average().metrics[self.config.best_model_metric]
-            )
-
         best_model_epoch = -1
 
         for epoch in range(self.config.epochs):
             print(f"\nEpoch {epoch + 1}/{self.config.epochs}")
-
             train_losses = self._train_epoch(epoch, self.dataloader_train)
             self._after_epoch_complete(epoch)
 
@@ -220,14 +222,20 @@ class Trainer:
 
             print(
                 f"\n\n{'='*20}\nFinished Epoch {epoch + 1}/{self.config.epochs} "
-                f"train {self.loss_name}-loss: {train_losses.get_average().loss} "
-                f"val {self.loss_name}-loss: {val_losses.get_average().loss}"
+                f"train {self.loss_name}-loss: {train_losses.get_average().loss} ",
+                end="",
             )
+            for i, val_loss in enumerate(val_losses):
+                print(
+                    f"val {self.loss_name}-loss {i}: {val_loss.get_average().loss}",
+                    end="",
+                )
+            print()
             epoch_losses = EpochLosses(train_losses, val_losses)
             history.append(epoch_losses)
             self._log_epoch_wandb(epoch_losses)
             if self.config.return_best_model:
-                curr_epoch_val_metric = get_relevant_metric(val_losses)
+                curr_epoch_val_metric = self.get_relevant_metric(val_losses)
 
                 is_better = (
                     curr_epoch_val_metric < best_model_val_metric
@@ -245,7 +253,8 @@ class Trainer:
                 and len(epoch_losses) >= self.config.early_stopping_patience
             ):
                 relevant_metric_history = [
-                    get_relevant_metric(epoch_loss.val_losses) for epoch_loss in history
+                    self.get_relevant_metric(epoch_loss.val_losses)
+                    for epoch_loss in history
                 ][-self.config.early_stopping_patience :]
 
                 # Adapt basline metric via early_stopping_epsilon
@@ -272,12 +281,11 @@ class Trainer:
         )
 
     def _save_best_model(self, best_model_path):
-        torch.save(self._get_eval_model().state_dict(), best_model_path)
+        torch.save(self.model.state_dict(), best_model_path)
 
     def _load_best_model_and_test(self, history, best_model_path, best_model_epoch):
         if self.config.return_best_model:
-            model = self._get_eval_model()
-            model.load_state_dict(torch.load(best_model_path))
+            self.model.load_state_dict(torch.load(best_model_path))
             os.remove(best_model_path)
             print("Loaded model with best validation loss of this experiment from disk")
 
@@ -285,7 +293,6 @@ class Trainer:
         test_losses = self.evaluate_epoch("test")
         wandb.log(self._get_wandb_metrics(val_losses, "val"))
         wandb.log(self._get_wandb_metrics(test_losses, "test"))
-        print(f"\nTest loss ({self.loss_name}): {test_losses.get_average().loss}")
-        return (
-            model if self.config.return_best_model else self._get_eval_model()  # type: ignore
-        ), TrainHistory(history, test_losses, best_model_epoch)
+        for i, test_loss in enumerate(test_losses):
+            print(f"\nTest loss ({self.loss_name}) {i}: {test_loss.get_average().loss}")
+        return self.model, TrainHistory(history, test_losses, best_model_epoch)

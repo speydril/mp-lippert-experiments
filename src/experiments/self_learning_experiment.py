@@ -47,6 +47,20 @@ class SelfLearningExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = SelfLearningExperimentArgs(**config)
         super().__init__(config, yaml_config)
+        self.val_uk_biobank_dataset = self._create_uk_biobank_dataset("val")
+        self.test_uk_biobank_dataset = self._create_uk_biobank_dataset("test")
+        self.val_biobank_loader = torch.utils.data.DataLoader(
+            self.val_uk_biobank_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            collate_fn=self.val_uk_biobank_dataset.get_collate_fn(),
+        )
+        self.test_biobank_loader = torch.utils.data.DataLoader(
+            self.test_uk_biobank_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            collate_fn=self.test_uk_biobank_dataset.get_collate_fn(),
+        )
 
         # Setting up student model
         # Same architecture, same initial checkpoint
@@ -69,6 +83,13 @@ class SelfLearningExperiment(BaseExperiment):
 
         return SelfTrainer(self)
 
+    def _create_uk_biobank_dataset(self, split: Literal["val", "test"]) -> BaseDataset:
+        return UkBiobankDataset(
+            config=self.config,
+            yaml_config=self.yaml_config,
+            with_masks=False,
+        ).get_split(split)
+
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
@@ -77,7 +98,7 @@ class SelfLearningExperiment(BaseExperiment):
                 config=self.config,
                 yaml_config=self.yaml_config,
                 with_masks=False,
-            )
+            ).get_split(split)
         else:
             return JoinedRetinaDataset.from_config(
                 self.config, self.yaml_config, self.config.seed

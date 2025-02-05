@@ -2,6 +2,8 @@ from math import nan
 from typing import NamedTuple, Optional, Union
 from dataclasses import dataclass
 
+from matplotlib.pylab import f
+
 
 class DecodedPredictionBatch(NamedTuple):
     predictions: list[str]
@@ -108,24 +110,32 @@ class SingleEpochHistory:
 
 class EpochLosses(NamedTuple):
     train_losses: SingleEpochHistory
-    val_losses: SingleEpochHistory
+    val_losses: SingleEpochHistory | list[SingleEpochHistory]
 
     def to_dict(self):
         return {
             "train": self.train_losses.to_dict(),
-            "val": self.val_losses.to_dict(),
+            "val": (
+                self.val_losses.to_dict()
+                if self.val_losses is SingleEpochHistory
+                else [val.to_dict() for val in self.val_losses]  # type: ignore
+            ),
         }
 
 
 class TrainHistory(NamedTuple):
     epochs: list[EpochLosses]
-    test_losses: SingleEpochHistory
+    test_losses: SingleEpochHistory | list[SingleEpochHistory]
     epoch_index_of_test_model: int
 
     def to_dict(self):
         return {
             "epochs": [epoch.to_dict() for epoch in self.epochs],
-            "test": self.test_losses.to_dict(),
+            "test": (
+                [self.test_losses.to_dict()]
+                if self.test_losses is SingleEpochHistory
+                else [test.to_dict() for test in self.test_losses]  # type: ignore
+            ),
             "epoch_index_of_test_model": self.epoch_index_of_test_model,
         }
 
@@ -195,6 +205,8 @@ class TrainHistory(NamedTuple):
             )
             metric_keys = metric_keys.union(
                 epoch.val_losses.get_average().metrics.keys()
+                if isinstance(epoch.val_losses, SingleEpochHistory)
+                else epoch.val_losses[0].get_average().metrics.keys()
             )
 
         # Creating a figure and subplots
@@ -204,47 +216,98 @@ class TrainHistory(NamedTuple):
         num_epochs = len(self.epochs)
 
         for i, metric_key in enumerate(metric_keys):
-            train_averages = [epoch.train_losses.get_average() for epoch in self.epochs]
-            val_averages = [epoch.val_losses.get_average() for epoch in self.epochs]
-            # plot val and train loss history as subplots
-            train_losses = [
-                epoch.metrics[metric_key]
-                for epoch in train_averages
-                if metric_key in epoch.metrics
-            ]
-            val_losses = [
-                epoch.metrics[metric_key]
-                for epoch in val_averages
-                if metric_key in epoch.metrics
-            ]
-            ax = axs[i] if len(metric_keys) > 1 else axs
-            ax.plot(
-                train_losses, label=f"{metric_key} (train)", linestyle="-", marker="o"
+            ax = axs[i] if len(metric_keys) > 1 else axs  # type: ignore
+
+            def plot_loss(
+                label: str,
+                linestyle: str,
+                marker: str,
+                histories: list[SingleEpochHistory],
+                metric_key: str,
+            ):
+                averages = [history.get_average() for history in histories]
+                losses = [
+                    epoch.metrics[metric_key]
+                    for epoch in averages
+                    if metric_key in epoch.metrics
+                ]
+                ax.plot(  # type: ignore
+                    losses,
+                    label=label,
+                    linestyle=linestyle,
+                    marker=marker,
+                )
+
+            plot_loss(
+                f"{metric_key} (train)",
+                "-",
+                "o",
+                [epoch.train_losses for epoch in self.epochs],
+                metric_key,
             )
-            ax.plot(
-                val_losses,
-                label=f"{metric_key} (validation)",
-                linestyle="-",
-                marker=".",
-            )
-            test_losses: list = [None] * len(train_losses)
-            test_losses[self.epoch_index_of_test_model] = (
-                self.test_losses.get_average().metrics[metric_key]
-            )
-            ax.plot(
-                test_losses,
-                label=f"{metric_key} (test)",
-                linestyle="-",
-                marker="x",
-                markersize=16,
-            )
-            ax.grid()
-            ax.set_xlabel("Epochs")
-            ax.set_ylabel(metric_key)
-            ax.set_title(f"{metric_key} history")
-            ax.legend()
+
+            if isinstance(self.epochs[0].val_losses, list):
+                for i in range(len(self.epochs[0].val_losses)):
+                    plot_loss(
+                        f"{metric_key} (validation {i})",
+                        "-",
+                        ".",
+                        [epoch.val_losses[i] for epoch in self.epochs],  # type: ignore
+                        metric_key,
+                    )
+            else:
+                plot_loss(
+                    f"{metric_key} (validation)",
+                    "-",
+                    ".",
+                    [epoch.val_losses for epoch in self.epochs],  # type: ignore
+                    metric_key,
+                )
+
+            def plot_test_loss(
+                label: str,
+                linestyle: str,
+                marker: str,
+                losses: SingleEpochHistory,
+                metric_key: str,
+            ):
+                loss_avgs: list = [None] * len(self.epochs)
+                loss_avgs[self.epoch_index_of_test_model] = (
+                    losses.get_average().metrics[metric_key]
+                )
+                ax.plot(  # type: ignore
+                    loss_avgs,
+                    label=label,
+                    linestyle=linestyle,
+                    marker=marker,
+                    markersize=16,
+                )
+
+            if isinstance(self.test_losses, SingleEpochHistory):
+                plot_test_loss(
+                    f"{metric_key} (test)",
+                    "-",
+                    "x",
+                    self.test_losses,
+                    metric_key,
+                )
+            else:
+                for i, test_loss in enumerate(self.test_losses):
+                    plot_test_loss(
+                        f"{metric_key} (test {i})",
+                        "-",
+                        "x",
+                        test_loss,
+                        metric_key,
+                    )
+
+            ax.grid()  # type: ignore
+            ax.set_xlabel("Epochs")  # type: ignore
+            ax.set_ylabel(metric_key)  # type: ignore
+            ax.set_title(f"{metric_key} history")  # type: ignore
+            ax.legend()  # type: ignore
             x_ticks = list(range(0, num_epochs, max(1, num_epochs // 10)))
-            ax.set_xticks(x_ticks, [str(i) for i in x_ticks])
+            ax.set_xticks(x_ticks, [str(i) for i in x_ticks])  # type: ignore
 
         plt.tight_layout()
         plt.savefig(out_path)
@@ -256,23 +319,39 @@ class TrainHistory(NamedTuple):
         out_dir = os.path.join(out_dir, metric_key)
         os.makedirs(out_dir, exist_ok=True)
 
-        self.test_losses.save_plot_metric_as_hist(
-            metric_key,
-            "Test set",
-            os.path.join(out_dir, "test_histogram.png"),
-        )
+        if isinstance(self.test_losses, SingleEpochHistory):
+            self.test_losses.save_plot_metric_as_hist(
+                metric_key,
+                "Test set",
+                os.path.join(out_dir, "test_histogram.png"),
+            )
+        else:
+            for i, test_loss in enumerate(self.test_losses):
+                test_loss.save_plot_metric_as_hist(
+                    metric_key,
+                    f"Test set {i}",
+                    os.path.join(out_dir, f"test_histogram_{i}.png"),
+                )
         fig, ax = plt.subplots(len(self.epochs), 2, figsize=(10, len(self.epochs) * 5))
         for i, epoch in enumerate(self.epochs):
             epoch.train_losses.plot_metric_as_hist(
                 metric_key,
                 f"Train (ep. {i})",
-                ax[i, 0],
+                ax[i, 0],  # type: ignore
             )
-            epoch.val_losses.plot_metric_as_hist(
-                metric_key,
-                f"Val (ep. {i})",
-                ax[i, 1],
-            )
+            if isinstance(epoch.val_losses, SingleEpochHistory):
+                epoch.val_losses.plot_metric_as_hist(
+                    metric_key,
+                    f"Val (ep. {i})",
+                    ax[i, 1],  # type: ignore
+                )
+            else:
+                for j, val_loss in enumerate(epoch.val_losses):
+                    val_loss.plot_metric_as_hist(
+                        metric_key,
+                        f"Val {j} (ep. {i})",
+                        ax[i, 1],  # type: ignore
+                    )
 
         plt.tight_layout()
         plt.savefig(os.path.join(out_dir, "val_train_histograms.png"))

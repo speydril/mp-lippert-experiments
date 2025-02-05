@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from cv2 import norm
 import torch
 from src.models.segment_anything.modeling.sam import SamBatched
 from src.args.yaml_config import YamlConfig
@@ -12,7 +13,7 @@ from src.models.segment_anything.build_sam import (
 )
 from src.models.base_model import BaseModel, ModelOutput, Loss
 from src.datasets.base_dataset import Batch
-from pydantic import BaseModel as PDBaseModel
+from pydantic import BaseModel as PDBaseModel, Field
 from torch.nn import BCEWithLogitsLoss as BCELoss
 from src.models.auto_sam_prompt_encoder.model_single import ModelEmb
 from torch.nn import functional as F
@@ -37,6 +38,14 @@ class AutoSamModelArgs(PDBaseModel):
     hard_net_arch: int = 68
     depth_wise: bool = False
     Idim: int = 512
+    lower_confidence_quantile: Optional[float] = Field(
+        default=None,
+        description="Lower quantile of confidence of targets, should be between 0.0 and 0.5 with 0.5 being the least restrictive",
+    )
+    upper_confidence_quantile: Optional[float] = Field(
+        default=None,
+        description="Upper quantile of confidence of targets, should be between 0.5 and 1.0 with 0.5 being the least restrictive",
+    )
 
 
 sam_model_registry = {
@@ -87,7 +96,12 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         return ModelOutput(masks)
 
-    def compute_loss(self, outputs: ModelOutput, batch: SAMBatch) -> Loss:
+    def compute_loss(
+        self,
+        outputs: ModelOutput,
+        batch: SAMBatch,
+        confidence_thresholding: bool = False,
+    ) -> Loss:
         assert batch.target is not None
 
         normalized_logits = norm_batch(outputs.logits)
@@ -101,6 +115,19 @@ class AutoSamModel(BaseModel[SAMBatch]):
             size,
             mode="nearest",
         )
+
+        if (
+            confidence_thresholding
+            and self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        ):
+            assert gts_sized.max() <= 1
+            assert gts_sized.min() >= 0
+            gradient_mask = self._get_gradient_mask(gts_sized)
+            # Set everything to 0 were the confidence is below the threshold
+            gts_sized[gradient_mask == 0] = 0
+            outputs.logits[gradient_mask == 0] = 0
+            normalized_logits[gradient_mask == 0] = 0
 
         bce = self.bce_loss.forward(outputs.logits, gts_sized)
         dice_loss = compute_dice_loss(normalized_logits, gts_sized)
@@ -126,8 +153,23 @@ class AutoSamModel(BaseModel[SAMBatch]):
         gts = F.interpolate(
             gts, (self.config.Idim, self.config.Idim), mode="bilinear"
         )  # was mode=nearest in original code
+
+        if (
+            confidence_thresholding
+            and self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        ):
+            assert gts.max() <= 1
+            assert gts.min() >= 0
+            gradient_mask = self._get_gradient_mask(gts)
+            # Set everything to 0 were the confidence is below the threshold
+            gts[gradient_mask == 0] = 0
+            masks[gradient_mask == 0] = 0
+
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
+        gts[gts > 0.5] = 1
+        gts[gts <= 0.5] = 0
         dice_score, IoU = get_dice_ji(
             masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
         )
@@ -141,6 +183,24 @@ class AutoSamModel(BaseModel[SAMBatch]):
                 "dice_score": dice_score,
                 "IoU": IoU,
             },
+        )
+
+    def _get_gradient_mask(self, gts_sized):
+        assert (
+            self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        )
+
+        lower_threshold = torch.quantile(
+            gts_sized.float(), self.config.lower_confidence_quantile
+        )
+        upper_threshold = torch.quantile(
+            gts_sized.float(), self.config.upper_confidence_quantile
+        )
+
+        return torch.logical_or(
+            gts_sized <= lower_threshold,
+            gts_sized > upper_threshold,
         )
 
     def segment_image(

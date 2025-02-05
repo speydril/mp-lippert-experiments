@@ -1,4 +1,5 @@
-from typing import cast
+from tokenize import Single
+from typing import Literal, cast
 
 import numpy as np
 import torch
@@ -9,6 +10,7 @@ from src.experiments.self_learning_experiment import SelfLearningExperiment
 from src.datasets.base_dataset import Batch
 from src.train.trainer import Trainer
 from src.util.datatset_helper import generate_unsup_data
+from src.train.history import SingleEpochHistory
 
 
 class SelfTrainer(Trainer):
@@ -20,8 +22,82 @@ class SelfTrainer(Trainer):
         for p in self.experiment.teacher_model.parameters():
             p.requires_grad = False
 
-    def _get_eval_model(self):
-        return self.experiment.teacher_model
+    def evaluate_epoch(
+        self, mode: Literal["val"] | Literal["test"]
+    ) -> list[SingleEpochHistory]:
+        results = super().evaluate_epoch(mode)
+
+        dataloader = (
+            self.experiment.val_biobank_loader
+            if mode == "val"
+            else self.experiment.test_biobank_loader
+        )
+
+        self.model.eval()
+        evaluator = self.experiment.create_evaluator(mode)
+
+        for i, batch in enumerate(dataloader):
+            batch = cast(Batch, batch).to(self.device)
+            batch.target = self._preprocess_labels(batch)
+
+            with torch.no_grad():
+                outputs = self.model.forward(batch)
+            loss = self.model.compute_loss(outputs, batch)
+            evaluator.track_batch(outputs, loss, batch)
+            if (
+                i % self.config.log_every_n_batches
+                == self.config.log_every_n_batches - 1
+            ):
+                self._log_intermediate(i, len(dataloader), evaluator)
+
+        pseudo_label_results = evaluator.evaluate()
+        evaluator.clean_up()
+        results.append(pseudo_label_results)
+        return results
+
+    def _get_wandb_metrics(
+        self, epoch: SingleEpochHistory | list[SingleEpochHistory], prefix: str
+    ):
+        if isinstance(epoch, SingleEpochHistory):
+            return super()._get_wandb_metrics(epoch, prefix)
+
+        def add_prefix_to_dict_keys(d: dict, prefix: str, suffix: str):
+            return {f"{prefix}_{k}_{suffix}": v for k, v in d.items()}
+
+        wandb_metrics = {}
+        for i, epoch_history in enumerate(epoch):
+            loss_avg = epoch_history.get_average()
+            epoch_val_metrics = loss_avg.metrics
+
+            wandb_metrics[f"{prefix}_{self.loss_name}_loss_{i}"] = loss_avg.loss
+            wandb_metrics.update(
+                add_prefix_to_dict_keys(epoch_val_metrics, prefix, str(i))
+            )
+
+        loss_sum_of_avgs = epoch[0].get_average()
+        loss_sum_of_avgs += epoch[1].get_average()
+        loss_sum_of_avgs /= 2
+        epoch_val_metrics = loss_sum_of_avgs.metrics
+        wandb_metrics[f"{prefix}_{self.loss_name}_loss_avg"] = loss_sum_of_avgs.loss
+        wandb_metrics.update(add_prefix_to_dict_keys(epoch_val_metrics, prefix, "avg"))
+
+        return wandb_metrics
+
+    def get_relevant_metric(
+        self, epoch_hists: SingleEpochHistory | list[SingleEpochHistory]
+    ):
+        assert isinstance(epoch_hists, list) and len(epoch_hists) == 2
+
+        loss_sum = epoch_hists[0].get_average()
+        loss_sum += epoch_hists[1].get_average()
+
+        metrics = self._get_wandb_metrics(epoch_hists, "val")
+
+        return (
+            loss_sum.loss
+            if self.config.best_model_metric == "loss"
+            else metrics[self.config.best_model_metric]
+        )
 
     # Taken from https://github.com/usr922/FST/blob/main/semi_seg/train_semi.py
     # Line: 326
