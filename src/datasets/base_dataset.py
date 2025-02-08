@@ -86,6 +86,8 @@ class JoinedDataset(BaseDataset):
         self.seed = seed
 
     def __getitem__(self, index: int) -> Sample:
+        if index >= len(self):
+            raise IndexError
         dataset_index, sample_index = self.get_dataset_and_sample_index(
             self.index_map[index]
         )
