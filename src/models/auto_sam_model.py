@@ -75,7 +75,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
         self.sam = sam_model_registry[config.sam_model](
             checkpoint=config.sam_checkpoint
         )
-        self.bce_loss = BCELoss()
+        self.bce_loss = BCELoss(reduction="none")
         self.prompt_encoder = ModelEmb(
             hard_net_arch=config.hard_net_arch,
             depth_wise=config.depth_wise,
@@ -116,22 +116,13 @@ class AutoSamModel(BaseModel[SAMBatch]):
             mode="nearest",
         )
 
-        if (
-            confidence_thresholding
-            and self.config.lower_confidence_quantile is not None
-            and self.config.upper_confidence_quantile is not None
-        ):
-            assert gts_sized.max() <= 1
-            assert gts_sized.min() >= 0
-            gradient_mask = self._get_gradient_mask(gts_sized)
-            # Set everything to 0 were the confidence is below the threshold
-            gts_sized[gradient_mask == 0] = 0
-            outputs.logits[gradient_mask == 0] = 0
-            normalized_logits[gradient_mask == 0] = 0
-
-        bce = self.bce_loss.forward(outputs.logits, gts_sized)
-        dice_loss = compute_dice_loss(normalized_logits, gts_sized)
-        loss_value = bce + dice_loss
+        bce_loss = self.calculate_bce_loss(
+            outputs.logits, gts_sized, confidence_thresholding
+        )
+        dice_loss = self.compute_dice_loss(
+            normalized_logits, gts_sized, enable_thresholding=confidence_thresholding
+        )
+        loss_value = bce_loss + dice_loss
 
         input_size = tuple(batch.image_size[0][-2:].int().tolist())
         original_size = tuple(batch.original_size[0][-2:].int().tolist())
@@ -179,11 +170,29 @@ class AutoSamModel(BaseModel[SAMBatch]):
             {
                 "dice+bce_loss": loss_value.detach().item(),
                 "dice_loss": dice_loss.detach().item(),
-                "bce_loss": bce.detach().item(),
+                "bce_loss": bce_loss.detach().item(),
                 "dice_score": dice_score,
                 "IoU": IoU,
             },
         )
+
+    def calculate_bce_loss(self, target, prediction, enable_thresholding=False):
+        if (
+            not enable_thresholding
+            or self.config.lower_confidence_quantile is None
+            or self.config.upper_confidence_quantile is None
+        ):
+            return self.bce_loss.forward(prediction, target).mean()
+
+        loss_mask = self._get_gradient_mask(target)
+
+        loss = self.bce_loss.forward(prediction, target)
+
+        total_pixels = loss_mask.sum()
+
+        loss[loss_mask == 0] = 0
+
+        return loss.sum(dtype=torch.float32) / total_pixels
 
     def _get_gradient_mask(self, gts_sized):
         assert (
@@ -285,15 +294,23 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
+    def compute_dice_loss(self, y_true, y_pred, smooth=1, enable_thresholding=False):
+        if (
+            enable_thresholding
+            and self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        ):
+            loss_mask = self._get_gradient_mask(y_true)
+            y_true = y_true * loss_mask
+            y_pred = y_pred * loss_mask
 
-def compute_dice_loss(y_true, y_pred, smooth=1):
-    alpha = 0.5
-    beta = 0.5
-    tp = torch.sum(y_true * y_pred, dim=(1, 2, 3))
-    fn = torch.sum(y_true * (1 - y_pred), dim=(1, 2, 3))
-    fp = torch.sum((1 - y_true) * y_pred, dim=(1, 2, 3))
-    tversky_class = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
-    return 1 - torch.mean(tversky_class)
+        alpha = 0.5
+        beta = 0.5
+        tp = torch.sum(y_true * y_pred, dim=(1, 2, 3))
+        fn = torch.sum(y_true * (1 - y_pred), dim=(1, 2, 3))
+        fp = torch.sum((1 - y_true) * y_pred, dim=(1, 2, 3))
+        tversky_class = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
+        return 1 - torch.mean(tversky_class)
 
 
 def get_input_dict(imgs, original_sz, img_sz):
