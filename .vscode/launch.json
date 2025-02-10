@@ -96,6 +96,32 @@
             ]
         },
         {
+            "name": "Tune hq sam model multi_ds_vessel",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--experiment_id=multi_ds_vessel",
+                "--sam_model=vit_b",
+                "--learning_rate=0.0003",
+                "--prompt_encoder_lr=0.003",
+                "--image_encoder_lr=0.0",
+                "--mask_decoder_lr=0.003",
+                "--batch_size=3",
+                "--epochs=30",
+                "--weight_decay=1e-4",
+                "--early_stopping_patience=10",
+                "--visualize_n_segmentations=5",
+                "--gamma=0.9",
+                "--step_size=1",
+                "--best_model_metric=IoU",
+                "--minimize_best_model_metric=false",
+                "--drive_test_equals_val=false",
+                "--use_hq=true"
+            ]
+        },
+        {
             "name": "Tune prompt encoder multi_ds_vessel",
             "type": "debugpy",
             "request": "launch",
@@ -117,7 +143,7 @@
                 "--step_size=1",
                 "--best_model_metric=IoU",
                 "--minimize_best_model_metric=false",
-                "--drive_test_equals_val=false"
+                "--drive_test_equals_val=false",
             ]
         },
         {

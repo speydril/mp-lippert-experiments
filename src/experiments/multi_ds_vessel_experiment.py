@@ -1,6 +1,7 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
+from src.models.auto_sam_hq_model import AutoSamHQModel, AutoSamHQModelArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
@@ -18,7 +19,12 @@ from pydantic import Field
 
 
 class MultiDSVesselExperimentArgs(
-    BaseExperimentArgs, AdamArgs, StepLRArgs, AutoSamModelArgs, JoinedRetinaDatasetArgs
+    BaseExperimentArgs,
+    AdamArgs,
+    StepLRArgs,
+    AutoSamModelArgs,
+    AutoSamHQModelArgs,
+    JoinedRetinaDatasetArgs,
 ):
     prompt_encoder_checkpoint: Optional[str] = Field(
         default=None, description="Path to prompt encoder checkpoint"
@@ -45,6 +51,7 @@ class MultiDSVesselExperimentArgs(
         default=0,
         description="Number of epochs to linearly warmup mask decoder lr to mask_decoder_lr value from 0",
     )
+    use_hq: bool = Field(default=False, description="Use SAM HQ model")
 
 
 class MultiDsVesselExperiment(BaseExperiment):
@@ -68,7 +75,11 @@ class MultiDsVesselExperiment(BaseExperiment):
 
     def _create_model(self) -> BaseModel:
         image_encoder_no_grad = self.config.image_encoder_lr is None
-        model = AutoSamModel(self.config, image_encoder_no_grad)
+        model = (
+            AutoSamModel(self.config, image_encoder_no_grad)
+            if not self.config.use_hq
+            else AutoSamHQModel(self.config, image_encoder_no_grad)
+        )
         if self.config.prompt_encoder_checkpoint is not None:
             print(
                 f"loading prompt-encoder model from checkpoint {self.config.prompt_encoder_checkpoint}"
@@ -114,6 +125,19 @@ class MultiDsVesselExperiment(BaseExperiment):
                 ),
             }
         )
+        if self.config.use_hq:
+            params.append(
+                {
+                    "params": cast(
+                        AutoSamHQModel, self.model
+                    ).mask_decoder.parameters(),
+                    "lr": (
+                        self.config.mask_decoder_lr
+                        if self.config.mask_decoder_lr is not None
+                        else 0
+                    ),
+                }
+            )
 
         return torch.optim.Adam(
             params,
