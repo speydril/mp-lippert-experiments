@@ -1,9 +1,11 @@
-from typing import Callable, cast
+from typing import Callable, Optional, cast
+import numpy as np
 import torch
 import torch.nn as nn
 from torch import nn
 from timm.layers.weight_init import trunc_normal_
 
+from args.yaml_config import YamlConfig
 from src.models.auto_sam_model import (
     SAMBatch,
     compute_dice_loss,
@@ -12,6 +14,8 @@ from src.models.auto_sam_model import (
 )
 from src.models.base_model import BaseModel, Loss, ModelOutput
 from torch.nn import functional as F
+
+from util.polyp_transform import get_polyp_transform
 
 
 class InitWeights_He(object):
@@ -335,3 +339,83 @@ class FRUnet(BaseModel[SAMBatch]):
                 "IoU": IoU,
             },
         )
+    
+    def segment_image(
+        self,
+        image: np.ndarray,
+        pixel_mean: tuple[float, float, float],
+        pixel_std: tuple[float, float, float],
+        img_encoder_size: int,
+    ):
+        import cv2
+        from .segment_anything.utils.transforms import ResizeLongestSide
+
+        _, test_transform = get_polyp_transform()
+        img, _ = test_transform(image, np.zeros_like(image))
+        original_size = tuple(img.shape[1:3])
+
+        transform = ResizeLongestSide(img_encoder_size, pixel_mean, pixel_std)
+        Idim = self.config.Idim
+
+        image_tensor = transform.apply_image_torch(img)
+        input_size = tuple(image_tensor.shape[1:3])
+        input_images = transform.preprocess(image_tensor).unsqueeze(dim=0).cuda()
+
+        orig_imgs_small = F.interpolate(
+            input_images, (Idim, Idim), mode="bilinear", align_corners=True
+        )
+        dense_embeddings = self.prompt_encoder.forward(orig_imgs_small)
+        with torch.no_grad():
+            mask = norm_batch(
+               self.unet(batch.input)
+            )
+
+        mask = self.sam.postprocess_masks(
+            mask, input_size=input_size, original_size=original_size
+        )
+        mask = mask.squeeze().cpu().numpy()
+        mask = (255 * mask).astype(np.uint8)
+        mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        return image, mask
+
+    def segment_image_from_file(self, image_path: str):
+        import cv2
+
+        image = cv2.cvtColor(
+            cv2.imread(image_path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB
+        )
+        yaml_config = YamlConfig().config
+        pixel_mean, pixel_std = (
+            yaml_config.fundus_pixel_mean,
+            yaml_config.fundus_pixel_std,
+        )
+        return self.segment_image(
+            image, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
+        )
+
+    def segment_and_write_image_from_file(
+        self,
+        image_path: str,
+        output_path: str,
+        mask_opacity: float = 0.4,
+        gts_path: Optional[str] = None,
+    ):
+        import cv2
+        from PIL import Image
+
+        image, mask = self.segment_image_from_file(image_path)
+        if gts_path is not None:
+            with Image.open(gts_path) as im:
+                gts = np.array(im.convert("RGB"))
+        else:
+            gts = np.zeros_like(mask)
+        mask[mask > 255 / 2] = 255
+        mask[mask <= 255 / 2] = 0
+        overlay = (
+            np.array(mask) * np.array([1, 0, 1]) + np.array(gts) * np.array([0, 1, 0])
+        ).astype(image.dtype)
+        output_image = cv2.addWeighted(
+            image, 1 - mask_opacity, overlay, mask_opacity, 0
+        )
+
+        cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
