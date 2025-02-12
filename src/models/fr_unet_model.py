@@ -1,11 +1,11 @@
-from typing import Callable, Optional, cast
+from typing import Callable, Optional, Tuple, cast
 import numpy as np
 import torch
 import torch.nn as nn
 from torch import nn
 from timm.layers.weight_init import trunc_normal_
 
-from args.yaml_config import YamlConfig
+from src.args.yaml_config import YamlConfig
 from src.models.auto_sam_model import (
     SAMBatch,
     compute_dice_loss,
@@ -15,7 +15,7 @@ from src.models.auto_sam_model import (
 from src.models.base_model import BaseModel, Loss, ModelOutput
 from torch.nn import functional as F
 
-from util.polyp_transform import get_polyp_transform
+from src.util.polyp_transform import get_polyp_transform
 
 
 class InitWeights_He(object):
@@ -279,6 +279,7 @@ class FRUnetArgs(PBaseModel):
 
 class FRUnet(BaseModel[SAMBatch]):
     def __init__(self, config: FRUnetArgs):
+        super().__init__()
         self.unet = _FR_UNet(num_channels=3, dropout=config.dropout)
 
     def forward(self, batch: SAMBatch) -> ModelOutput:
@@ -339,7 +340,7 @@ class FRUnet(BaseModel[SAMBatch]):
                 "IoU": IoU,
             },
         )
-    
+
     def segment_image(
         self,
         image: np.ndarray,
@@ -355,22 +356,15 @@ class FRUnet(BaseModel[SAMBatch]):
         original_size = tuple(img.shape[1:3])
 
         transform = ResizeLongestSide(img_encoder_size, pixel_mean, pixel_std)
-        Idim = self.config.Idim
 
         image_tensor = transform.apply_image_torch(img)
         input_size = tuple(image_tensor.shape[1:3])
         input_images = transform.preprocess(image_tensor).unsqueeze(dim=0).cuda()
 
-        orig_imgs_small = F.interpolate(
-            input_images, (Idim, Idim), mode="bilinear", align_corners=True
-        )
-        dense_embeddings = self.prompt_encoder.forward(orig_imgs_small)
         with torch.no_grad():
-            mask = norm_batch(
-               self.unet(batch.input)
-            )
+            mask = norm_batch(self.unet(input_images))
 
-        mask = self.sam.postprocess_masks(
+        mask = self.postprocess_masks(
             mask, input_size=input_size, original_size=original_size
         )
         mask = mask.squeeze().cpu().numpy()
@@ -392,6 +386,37 @@ class FRUnet(BaseModel[SAMBatch]):
         return self.segment_image(
             image, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
         )
+
+    def postprocess_masks(
+        self,
+        masks: torch.Tensor,
+        input_size: Tuple[int, ...],
+        original_size: Tuple[int, ...],
+    ) -> torch.Tensor:
+        """
+        Remove padding and upscale masks to the original image size.
+
+        Arguments:
+          masks (torch.Tensor): Batched masks from the mask_decoder,
+            in BxCxHxW format.
+          input_size (tuple(int, int)): The size of the image input to the
+            model, in (H, W) format. Used to remove padding.
+          original_size (tuple(int, int)): The original size of the image
+            before resizing for input to the model, in (H, W) format.
+
+        Returns:
+          (torch.Tensor): Batched masks in BxCxHxW format, where (H, W)
+            is given by original_size.
+        """
+        masks = F.interpolate(
+            masks,
+            (1024, 1024),
+            mode="bilinear",
+            align_corners=True,
+        )
+        masks = masks[..., : int(input_size[0]), : int(input_size[1])]
+        masks = F.interpolate(masks, original_size, mode="bilinear", align_corners=True)
+        return masks
 
     def segment_and_write_image_from_file(
         self,

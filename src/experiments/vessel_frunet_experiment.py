@@ -1,7 +1,7 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
-from models.fr_unet_model import FRUnet, FRUnetArgs
+from src.models.fr_unet_model import FRUnet, FRUnetArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
