@@ -43,13 +43,10 @@ class MultiDSVesselExperimentArgs(
         default=None,
         description="Limit number of training samples, i.e. image mask pairs to include (if patch_samples is True, this is the number of patches)",
     )
-    mask_decoder_warmup_epochs: int = Field(
-        default=0,
-        description="Number of epochs to linearly warmup mask decoder lr to mask_decoder_lr value from 0",
-    )
     patch_samples: Optional[Literal[4, 16]] = Field(
         default=False, description="Patch samples into 4 or 16 parts"
     )
+
 
 
 class MultiDsVesselExperiment(BaseExperiment):
