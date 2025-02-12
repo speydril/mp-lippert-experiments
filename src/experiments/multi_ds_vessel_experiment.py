@@ -59,7 +59,9 @@ class MultiDsVesselExperiment(BaseExperiment):
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
         if split == "train":
-            self.ds.get_split(split, limit_samples=self.config.limit_train_samples)
+            return self.ds.get_split(
+                split, limit_samples=self.config.limit_train_samples
+            )
         return self.ds.get_split(split)
 
     def _create_model(self) -> BaseModel:
