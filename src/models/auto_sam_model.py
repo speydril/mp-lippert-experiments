@@ -176,7 +176,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
             },
         )
 
-    def calculate_bce_loss(self, target, prediction, enable_thresholding=False):
+    def calculate_bce_loss(self, prediction, target, enable_thresholding=False):
         if (
             not enable_thresholding
             or self.config.lower_confidence_quantile is None

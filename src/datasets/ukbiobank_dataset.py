@@ -17,9 +17,9 @@ from src.models.segment_anything.utils.transforms import ResizeLongestSide
 
 
 class UkBiobankDatasetArgs(BaseModel):
-    train_percentage: float = 0.8
+    train_percentage: float = 0.7
     val_percentage: float = 0.15
-    test_percentage: float = 0.05
+    test_percentage: float = 0.15
     filter_scores_filepath: str = (
         "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
     )
@@ -28,7 +28,6 @@ class UkBiobankDatasetArgs(BaseModel):
         description="Name of the the directory containing the pseudo labels to be filled into pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png",
     )
     limit: Optional[int] = None
-
 
 
 @dataclass
@@ -67,7 +66,9 @@ class UkBiobankDataset(BaseDataset):
         self.yaml_config = yaml_config
         self.with_masks = with_masks
         self.samples = self.load_data() if samples is None else samples
-        self.samples = self.samples if config.limit is None else self.samples[:config.limit]
+        self.samples = (
+            self.samples if config.limit is None else self.samples[: config.limit]
+        )
         pixel_mean, pixel_std = (
             self.yaml_config.fundus_pixel_mean,
             self.yaml_config.fundus_pixel_std,
