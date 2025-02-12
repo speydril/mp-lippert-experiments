@@ -6,7 +6,6 @@ from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
 )
-from src.models.auto_sam_model import AutoSamModel, AutoSamModelArgs
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
 from src.models.base_model import BaseModel
 from src.args.yaml_config import YamlConfigModel
@@ -18,11 +17,11 @@ import os
 from pydantic import Field
 
 
-class MultiDSVesselExperimentArgs(
+class VesselHQExperimentArgs(
     BaseExperimentArgs,
     AdamArgs,
     StepLRArgs,
-    AutoSamModelArgs,
+    AutoSamHQModelArgs,
     JoinedRetinaDatasetArgs,
 ):
     prompt_encoder_checkpoint: Optional[str] = Field(
@@ -52,9 +51,9 @@ class MultiDSVesselExperimentArgs(
     )
 
 
-class MultiDsVesselExperiment(BaseExperiment):
+class VesselHQExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
-        self.config = MultiDSVesselExperimentArgs(**config)
+        self.config = VesselHQExperimentArgs(**config)
 
         self.ds = JoinedRetinaDataset.from_config(
             self.config, yaml_config, self.config.seed
@@ -73,8 +72,8 @@ class MultiDsVesselExperiment(BaseExperiment):
 
     def _create_model(self) -> BaseModel:
         image_encoder_no_grad = self.config.image_encoder_lr is None
-        model = AutoSamModel(self.config, image_encoder_no_grad)
-          
+        model = AutoSamHQModel(self.config, image_encoder_no_grad)
+
         if self.config.prompt_encoder_checkpoint is not None:
             print(
                 f"loading prompt-encoder model from checkpoint {self.config.prompt_encoder_checkpoint}"
@@ -87,11 +86,11 @@ class MultiDsVesselExperiment(BaseExperiment):
 
     @classmethod
     def get_args_model(cls):
-        return MultiDSVesselExperimentArgs
+        return VesselHQExperimentArgs
 
     def create_optimizer(self) -> Optimizer:
         prompt_enc_params: dict = {
-            "params": cast(AutoSamModel, self.model).prompt_encoder.parameters(),
+            "params": cast(AutoSamHQModel, self.model).prompt_encoder.parameters(),
         }
         if self.config.prompt_encoder_lr is not None:
             prompt_enc_params["lr"] = self.config.prompt_encoder_lr
@@ -102,7 +101,7 @@ class MultiDsVesselExperiment(BaseExperiment):
             params.append(
                 {
                     "params": cast(
-                        AutoSamModel, self.model
+                        AutoSamHQModel, self.model
                     ).sam.image_encoder.parameters(),
                     "lr": self.config.image_encoder_lr,
                 }
@@ -111,7 +110,8 @@ class MultiDsVesselExperiment(BaseExperiment):
         # Always add mask decoder to optimizer to allow for Automatic Mixed Precision to work even when mask decoder isn't trained
         # See bottom of https://chatgpt.com/share/675ae2c8-fff4-800c-8a5b-cecc352df76a
 
-        mask_decoder = cast(AutoSamModel, self.model).sam.mask_decoder
+        mask_decoder = cast(AutoSamHQModel, self.model).mask_decoder
+        
         params.append(
             {
                 "params": mask_decoder.parameters(),
@@ -140,7 +140,7 @@ class MultiDsVesselExperiment(BaseExperiment):
         return "dice+bce"
 
     def store_trained_model(self, trained_model: torch.nn.Module):
-        model = cast(AutoSamModel, trained_model)
+        model = cast(AutoSamHQModel, trained_model)
         torch.save(
             model.prompt_encoder.state_dict(),
             os.path.join(self.results_dir, "prompt_encoder.pt"),
@@ -151,7 +151,7 @@ class MultiDsVesselExperiment(BaseExperiment):
         )
 
     def run_after_training(self, trained_model: BaseModel):
-        model = cast(AutoSamModel, trained_model)
+        model = cast(AutoSamHQModel, trained_model)
 
         def predict_visualize(split: Literal["train", "test"]):
             out_dir = os.path.join(self.results_dir, f"{split}_visualizations")
@@ -164,7 +164,10 @@ class MultiDsVesselExperiment(BaseExperiment):
                 sample = ds.get_file_refs()[i]
                 out_path = os.path.join(out_dir, f"{i}.png")
                 model.segment_and_write_image_from_file(
-                    sample.img_path, out_path, gts_path=sample.gt_path
+                    sample.img_path,
+                    out_path,
+                    gts_path=sample.gt_path,
+                    threshold=self.get_optimal_threshold(model),
                 )
                 print(
                     f"{i+1}/{self.config.visualize_n_segmentations} {split} segmentations created\r",
@@ -173,3 +176,13 @@ class MultiDsVesselExperiment(BaseExperiment):
 
         predict_visualize("train")
         predict_visualize("test")
+
+    def get_optimal_threshold(self, trained_model: BaseModel):
+        dl = self._create_dataloader("val")
+        batch = next(iter(dl))
+
+        with torch.no_grad():
+            out = trained_model.forward(batch)
+            l = trained_model.compute_loss(out, batch)
+
+        return l.metrics["optimal_threshold"] if l.metrics is not None else 0.5

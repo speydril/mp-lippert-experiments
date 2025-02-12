@@ -7,7 +7,7 @@ from sklearn.metrics import roc_auc_score, roc_curve
 from sympy import im, use
 import torch
 import torch.nn as nn
-from torch.nn import BCELoss 
+from torch.nn import BCEWithLogitsLoss as BCELoss 
 from torch.nn import functional as F
 from src.models.auto_sam_model import SAMBatch
 from src.args.yaml_config import YamlConfig
@@ -99,7 +99,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         )
 
         
-        bce = self.bce_loss.forward(normalized_logits, gts_sized)
+        bce = self.bce_loss.forward(outputs.logits, gts_sized)
         dice_loss = compute_dice_loss(normalized_logits, gts_sized)
         loss_value = bce + dice_loss
 
@@ -259,6 +259,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         output_path: str,
         mask_opacity: float = 0.4,
         gts_path: Optional[str] = None,
+        threshold = 0.5
     ):
         import cv2
         from PIL import Image
@@ -269,8 +270,8 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
                 gts = np.array(im.convert("RGB"))
         else:
             gts = np.zeros_like(mask)
-        mask[mask > 255 / 2] = 255
-        mask[mask <= 255 / 2] = 0
+        mask[mask > 255 * threshold] = 255
+        mask[mask <= 255 * threshold] = 0
         overlay = (
             np.array(mask) * np.array([1, 0, 1]) + np.array(gts) * np.array([0, 1, 0])
         ).astype(image.dtype)
@@ -428,7 +429,7 @@ class MaskDecoderHQ(MaskDecoder):
         multimask_output: bool,
         hq_token_only: bool,
         interm_embeddings: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ):
         """
         Predict masks given image and prompt embeddings.
 
