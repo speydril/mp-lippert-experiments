@@ -1,6 +1,7 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
+from src.datasets.joined_patched_retina_dataset import JoinedPatchedRetinaDataset
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
@@ -39,16 +40,30 @@ class MultiDSVesselExperimentArgs(
         description="Learning rate for prompt encoder, if None, general learning rate is used",
     )
     limit_train_samples: Optional[int] = Field(
-        default=None, description="Limit number of training samples"
+        default=None,
+        description="Limit number of training samples, i.e. image mask pairs to include (if patch_samples is True, this is the number of patches)",
     )
+    patch_samples: Optional[Literal[4, 16]] = Field(
+        default=False, description="Patch samples into 4 or 16 parts"
+    )
+
 
 
 class MultiDsVesselExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = MultiDSVesselExperimentArgs(**config)
 
-        self.ds = JoinedRetinaDataset.from_config(
-            self.config, yaml_config, self.config.seed
+        self.ds = (
+            JoinedPatchedRetinaDataset.from_config(
+                self.config,
+                yaml_config,
+                self.config.seed,
+                patches=self.config.patch_samples,
+            )
+            if self.config.patch_samples is not None
+            else JoinedRetinaDataset.from_config(
+                self.config, yaml_config, self.config.seed
+            )
         )
         super().__init__(config, yaml_config)
 
@@ -154,6 +169,23 @@ class MultiDsVesselExperiment(BaseExperiment):
                 model.segment_and_write_image_from_file(
                     sample.img_path, out_path, gts_path=sample.gt_path
                 )
+
+                if self.config.patch_samples:
+                    patched_out_dir = os.path.join(
+                        out_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_out_path = os.path.join(patched_out_dir, f"{i}.png")
+                    os.makedirs(patched_out_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_out_path,
+                        gts_path=sample.gt_path,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
                 print(
                     f"{i+1}/{self.config.visualize_n_segmentations} {split} segmentations created\r",
                     end="",
