@@ -198,7 +198,11 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         dense_embeddings = self.prompt_encoder.forward(orig_imgs_small)
         with torch.no_grad():
             un_normalized_mask = self.sam_call(
-                input_images, self.sam, dense_embeddings, image_encoder_no_grad=True
+                input_images,
+                self.sam,
+                dense_embeddings,
+                image_encoder_no_grad=True,
+                use_hq_token_only=True,
             )
             mask = norm_batch(un_normalized_mask)
 
