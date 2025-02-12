@@ -41,10 +41,6 @@ class MultiDSVesselExperimentArgs(
     limit_train_samples: Optional[int] = Field(
         default=None, description="Limit number of training samples"
     )
-    mask_decoder_warmup_epochs: int = Field(
-        default=0,
-        description="Number of epochs to linearly warmup mask decoder lr to mask_decoder_lr value from 0",
-    )
 
 
 class MultiDsVesselExperiment(BaseExperiment):
