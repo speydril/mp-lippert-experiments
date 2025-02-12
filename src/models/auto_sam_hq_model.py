@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from email.mime import image
 from typing import List, Literal, Optional, Tuple
 from pydantic import BaseModel as PDBaseModel
+from sklearn.metrics import roc_auc_score, roc_curve
 
 from sympy import im, use
 import torch
 import torch.nn as nn
-from torch.nn import BCEWithLogitsLoss as BCELoss
+from torch.nn import BCELoss 
 from torch.nn import functional as F
 from src.models.auto_sam_model import SAMBatch
 from src.args.yaml_config import YamlConfig
@@ -97,7 +98,8 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
             mode="nearest",
         )
 
-        bce = self.bce_loss.forward(outputs.logits, gts_sized)
+        
+        bce = self.bce_loss.forward(normalized_logits, gts_sized)
         dice_loss = compute_dice_loss(normalized_logits, gts_sized)
         loss_value = bce + dice_loss
 
@@ -121,12 +123,25 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         gts = F.interpolate(
             gts, (self.config.Idim, self.config.Idim), mode="bilinear"
         )  # was mode=nearest in original code
+
+        roc = roc_auc_score(gts.flatten(),masks.flatten())
+        optimal_threshold = self.get_optimal_threshold(gts.flatten(),masks.flatten())
+
+        optimal_masks = masks.clone()
+
+        optimal_masks[optimal_masks > optimal_threshold] = 1
+        optimal_masks[optimal_masks <= optimal_threshold] = 0
+
+        optimal_dice_score, optimal_IoU = get_dice_ji(
+            masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
+        )
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
+
         dice_score, IoU = get_dice_ji(
             masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
         )
-
+       
         return Loss(
             loss_value,
             {
@@ -135,8 +150,17 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
                 "bce_loss": bce.detach().item(),
                 "dice_score": dice_score,
                 "IoU": IoU,
+                "roc_auc": float(roc),
+                "optimal_threshold": optimal_threshold,
+                "optimal_dice_score": optimal_dice_score,
+                "optimal_IoU": optimal_IoU,
             },
         )
+    def get_optimal_threshold(self, y_true, y_score):
+        fpr, tpr, thresholds = roc_curve(y_true, y_score)
+        j_scores = tpr - fpr
+        optimal_idx = np.argmax(j_scores)
+        return thresholds[optimal_idx]
 
     def sam_call(
         self,
