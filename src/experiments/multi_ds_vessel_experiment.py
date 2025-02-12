@@ -44,9 +44,8 @@ class MultiDSVesselExperimentArgs(
         description="Limit number of training samples, i.e. image mask pairs to include (if patch_samples is True, this is the number of patches)",
     )
     patch_samples: Optional[Literal[4, 16]] = Field(
-        default=False, description="Patch samples into 4 or 16 parts"
+        default=None, description="Patch samples into 4 or 16 parts"
     )
-
 
 
 class MultiDsVesselExperiment(BaseExperiment):
