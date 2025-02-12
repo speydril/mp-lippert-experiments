@@ -16,9 +16,15 @@ from src.util.polyp_transform import get_polyp_transform
 import numpy as np
 from src.models.segment_anything_hq.segment_anything_training import sam_model_registry
 from src.models.segment_anything_hq.segment_anything_training.modeling.sam import Sam
-from src.models.segment_anything_hq.segment_anything_training.modeling.mask_decoder import MaskDecoder
-from src.models.segment_anything_hq.segment_anything_training.modeling.transformer import TwoWayTransformer
-from src.models.segment_anything_hq.segment_anything_training.modeling.common import LayerNorm2d
+from src.models.segment_anything_hq.segment_anything_training.modeling.mask_decoder import (
+    MaskDecoder,
+)
+from src.models.segment_anything_hq.segment_anything_training.modeling.transformer import (
+    TwoWayTransformer,
+)
+from src.models.segment_anything_hq.segment_anything_training.modeling.common import (
+    LayerNorm2d,
+)
 
 
 def get_dice_ji(predict, target):
@@ -132,8 +138,6 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
             },
         )
 
-
-
     def sam_call(
         self,
         batched_input,
@@ -144,24 +148,29 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
     ):
         with torch.set_grad_enabled(not image_encoder_no_grad):
             input_images = batched_input
-            image_embeddings,interm_embeddings = sam.image_encoder(input_images)
-            
+            image_embeddings, interm_embeddings = sam.image_encoder(input_images)
+
             sparse_embeddings_none, dense_embeddings_none = sam.prompt_encoder(
                 points=None, boxes=None, masks=None
             )
-            empty_sparse_embeddings = [sparse_embeddings_none for _ in range(len(input_images))]
-        pe = sam.prompt_encoder.get_dense_pe()
-        image_pes = [pe for _ in range(len(input_images))]
+            empty_sparse_embeddings = [
+                sparse_embeddings_none for _ in range(len(input_images))
+            ]
+
+        image_pes = [
+            sam.prompt_encoder.get_dense_pe() for _ in range(len(input_images))
+        ]
         masks_hq = self.mask_decoder(
-                image_embeddings=image_embeddings,
-                image_pe=image_pes,
-                sparse_prompt_embeddings=empty_sparse_embeddings,
-                dense_prompt_embeddings=dense_embeddings,
-                multimask_output=False,
-                hq_token_only=use_hq_token_only,
-                interm_embeddings=interm_embeddings,
+            image_embeddings=image_embeddings,
+            image_pe=image_pes,
+            sparse_prompt_embeddings=empty_sparse_embeddings,
+            dense_prompt_embeddings=dense_embeddings,
+            multimask_output=False,
+            hq_token_only=use_hq_token_only,
+            interm_embeddings=interm_embeddings,
         )
         return masks_hq
+
     def segment_image(
         self,
         image: np.ndarray,
@@ -189,11 +198,9 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         dense_embeddings = self.prompt_encoder.forward(orig_imgs_small)
         with torch.no_grad():
             un_normalized_mask = self.sam_call(
-                    input_images, self.sam, dense_embeddings, image_encoder_no_grad=True
-                )
-            mask = norm_batch(
-                un_normalized_mask
+                input_images, self.sam, dense_embeddings, image_encoder_no_grad=True
             )
+            mask = norm_batch(un_normalized_mask)
 
         mask = self.sam.postprocess_masks(
             mask, input_size=input_size, original_size=original_size
@@ -245,6 +252,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
+
 def compute_dice_loss(y_true, y_pred, smooth=1):
     alpha = 0.5
     beta = 0.5
@@ -295,9 +303,6 @@ def norm_batch(x):
     return x
 
 
-
-
-
 class MLP(nn.Module):
     def __init__(
         self,
@@ -341,7 +346,7 @@ class MaskDecoderHQ(MaskDecoder):
         assert model_type in ["vit_b", "vit_l", "vit_h"]
 
         checkpoint_dict = {
-            "vit_b": "/dhc/home/hoangan.nguyen/mp-lippert-experiments/sam_vit_b_maskdecoder.pth",
+            "vit_b": "/dhc/groups/mp2024cl2/sam_vit_b_maskdecoder.pth",
             "vit_l": "pretrained_checkpoint/sam_vit_l_maskdecoder.pth",
             "vit_h": "pretrained_checkpoint/sam_vit_h_maskdecoder.pth",
         }

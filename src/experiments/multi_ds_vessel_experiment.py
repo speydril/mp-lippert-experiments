@@ -115,9 +115,15 @@ class MultiDsVesselExperiment(BaseExperiment):
 
         # Always add mask decoder to optimizer to allow for Automatic Mixed Precision to work even when mask decoder isn't trained
         # See bottom of https://chatgpt.com/share/675ae2c8-fff4-800c-8a5b-cecc352df76a
+
+        mask_decoder = (
+            cast(AutoSamModel, self.model).sam.mask_decoder
+            if not self.config.use_hq
+            else cast(AutoSamHQModel, self.model).mask_decoder
+        )
         params.append(
             {
-                "params": cast(AutoSamModel, self.model).sam.mask_decoder.parameters(),
+                "params": mask_decoder.parameters(),
                 "lr": (
                     self.config.mask_decoder_lr
                     if self.config.mask_decoder_lr is not None
@@ -125,19 +131,6 @@ class MultiDsVesselExperiment(BaseExperiment):
                 ),
             }
         )
-        if self.config.use_hq:
-            params.append(
-                {
-                    "params": cast(
-                        AutoSamHQModel, self.model
-                    ).mask_decoder.parameters(),
-                    "lr": (
-                        self.config.mask_decoder_lr
-                        if self.config.mask_decoder_lr is not None
-                        else 0
-                    ),
-                }
-            )
 
         return torch.optim.Adam(
             params,
