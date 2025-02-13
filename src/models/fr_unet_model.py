@@ -16,6 +16,7 @@ from src.models.base_model import BaseModel, Loss, ModelOutput
 from torch.nn import functional as F
 
 from src.util.polyp_transform import get_polyp_transform
+from src.util.image_util import calc_iou
 
 
 class InitWeights_He(object):
@@ -441,6 +442,17 @@ class FRUnet(BaseModel[SAMBatch]):
         ).astype(image.dtype)
         output_image = cv2.addWeighted(
             image, 1 - mask_opacity, overlay, mask_opacity, 0
+        )
+        iou = calc_iou(mask, gts)
+        cv2.putText(
+            output_image,
+            f"IoU: {iou:.2f}",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
         )
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))

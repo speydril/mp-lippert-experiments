@@ -1,6 +1,7 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
+from src.datasets.joined_patched_retina_dataset import JoinedPatchedRetinaDataset
 from src.models.auto_sam_hq_model import AutoSamHQModel, AutoSamHQModelArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
@@ -49,14 +50,26 @@ class VesselHQExperimentArgs(
         default=0,
         description="Number of epochs to linearly warmup mask decoder lr to mask_decoder_lr value from 0",
     )
+    patch_samples: Optional[Literal[4, 16]] = Field(
+        default=None, description="Patch samples into 4 or 16 parts"
+    )
 
 
 class VesselHQExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = VesselHQExperimentArgs(**config)
 
-        self.ds = JoinedRetinaDataset.from_config(
-            self.config, yaml_config, self.config.seed
+        self.ds = (
+            JoinedPatchedRetinaDataset.from_config(
+                self.config,
+                yaml_config,
+                self.config.seed,
+                patches=self.config.patch_samples,
+            )
+            if self.config.patch_samples is not None
+            else JoinedRetinaDataset.from_config(
+                self.config, yaml_config, self.config.seed
+            )
         )
         super().__init__(config, yaml_config)
 
@@ -196,6 +209,57 @@ class VesselHQExperiment(BaseExperiment):
                     gts_path=sample.gt_path,
                     threshold=auc_threshold,
                 )
+                if self.config.patch_samples:
+                    # Normal
+                    patched_out_dir = os.path.join(
+                        out_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_auc_out = os.path.join(patched_out_dir, f"{i}.png")
+                    os.makedirs(patched_out_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_auc_out,
+                        gts_path=sample.gt_path,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
+                    # IOU threshold optimized
+                    patched_iou_dir = os.path.join(
+                        iou_threshold_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_iou_out = os.path.join(patched_iou_dir, f"{i}.png")
+                    os.makedirs(patched_iou_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_iou_out,
+                        gts_path=sample.gt_path,
+                        threshold=iou_threshold,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
+                    # AUC threshold optimized
+                    patched_auc_dir = os.path.join(
+                        auc_threshold_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_auc_out = os.path.join(patched_auc_dir, f"{i}.png")
+                    os.makedirs(patched_auc_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_auc_out,
+                        threshold=auc_threshold,
+                        gts_path=sample.gt_path,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
 
                 print(
                     f"{i+1}/{self.config.visualize_n_segmentations} {split} segmentations created\r",

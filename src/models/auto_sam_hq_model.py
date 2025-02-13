@@ -1,18 +1,16 @@
-from dataclasses import dataclass
-from email.mime import image
 from typing import List, Literal, Optional, Tuple
 from pydantic import BaseModel as PDBaseModel
-from sklearn.metrics import auc, roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score, roc_curve
 
 from sympy import im, use
 import torch
 import torch.nn as nn
 from torch.nn import BCEWithLogitsLoss as BCELoss
 from torch.nn import functional as F
-from src.models.auto_sam_model import SAMBatch
+from src.models.auto_sam_model import SAMBatch, get_dice_ji
 from src.args.yaml_config import YamlConfig
 from src.models.base_model import BaseModel, ModelOutput, Loss
-from src.models.auto_sam_prompt_encoder.model_single import MaskEncoder, ModelEmb
+from src.models.auto_sam_prompt_encoder.model_single import ModelEmb
 from src.util.polyp_transform import get_polyp_transform
 import numpy as np
 from src.models.segment_anything_hq.segment_anything_training import sam_model_registry
@@ -26,17 +24,8 @@ from src.models.segment_anything_hq.segment_anything_training.modeling.transform
 from src.models.segment_anything_hq.segment_anything_training.modeling.common import (
     LayerNorm2d,
 )
+from src.util.image_util import calc_iou, extract_patch, join_patches
 
-
-def get_dice_ji(predict, target):
-    predict = predict + 1
-    target = target + 1
-    tp = np.sum(((predict == 2) * (target == 2)) * (target > 0))
-    fp = np.sum(((predict == 2) * (target == 1)) * (target > 0))
-    fn = np.sum(((predict == 1) * (target == 2)) * (target > 0))
-    ji = float(np.nan_to_num(tp / (tp + fp + fn)))
-    dice = float(np.nan_to_num(2 * tp / (2 * tp + fp + fn)))
-    return dice, ji
 
 
 class AutoSamHQModelArgs(PDBaseModel):
@@ -267,7 +256,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
         return image, mask
 
-    def segment_image_from_file(self, image_path: str):
+    def segment_image_from_file(self, image_path: str, patches: Optional[Literal[4, 16]] = None):
         import cv2
 
         image = cv2.cvtColor(
@@ -278,6 +267,35 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
             yaml_config.fundus_pixel_mean,
             yaml_config.fundus_pixel_std,
         )
+        if patches is not None:
+            img_patches = [extract_patch(image, i) for i in range(4)]
+
+            if patches == 4:
+                masks = [
+                    self.segment_image(
+                        img, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
+                    )[1]
+                    for img in img_patches
+                ]
+            else:
+                masks = []
+                for patch in img_patches:
+                    sub_patches = [extract_patch(patch, i) for i in range(4)]
+                    masks.append(
+                        join_patches(
+                            [
+                                self.segment_image(
+                                    sub_patch,
+                                    pixel_mean,
+                                    pixel_std,
+                                    yaml_config.fundus_resize_img_size,
+                                )[1]
+                                for sub_patch in sub_patches
+                            ]
+                        )
+                    )
+            mask = join_patches(masks)
+            return image, mask
         return self.segment_image(
             image, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
         )
@@ -289,11 +307,13 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         mask_opacity: float = 0.4,
         gts_path: Optional[str] = None,
         threshold=0.5,
+        patches: Optional[Literal[4, 16]] = None,
+
     ):
         import cv2
         from PIL import Image
 
-        image, mask = self.segment_image_from_file(image_path)
+        image, mask = self.segment_image_from_file(image_path, patches=patches)
         if gts_path is not None:
             with Image.open(gts_path) as im:
                 gts = np.array(im.convert("RGB"))
@@ -308,10 +328,22 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         output_image = cv2.addWeighted(
             image, 1 - mask_opacity, overlay, mask_opacity, 0
         )
+        if threshold is not 0.5:
+            cv2.putText(
+                output_image,
+                f"Threshold: {threshold:.2f}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        iou = calc_iou(mask, gts)
         cv2.putText(
             output_image,
-            f"Threshold: {threshold:.2f}",
-            (10, 30),
+            f"IoU: {iou:.2f}",
+            (10, 60),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
             (255, 255, 255),
