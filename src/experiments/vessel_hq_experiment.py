@@ -156,19 +156,47 @@ class VesselHQExperiment(BaseExperiment):
         def predict_visualize(split: Literal["train", "test"]):
             out_dir = os.path.join(self.results_dir, f"{split}_visualizations")
             os.makedirs(out_dir, exist_ok=True)
+            iou_threshold_dir = os.path.join(out_dir, "iou_threshold")
+            auc_threshold_dir = os.path.join(out_dir, "auc_threshold")
+            os.makedirs(iou_threshold_dir, exist_ok=True)
+            os.makedirs(auc_threshold_dir, exist_ok=True)
             ds = self.ds.get_split(split)
+            loss_metrics = self.calc_loss_metrics(model)
+
             print(
                 f"\nCreating {self.config.visualize_n_segmentations} {split} segmentations"
             )
             for i in range(min(len(ds), self.config.visualize_n_segmentations)):
                 sample = ds.get_file_refs()[i]
                 out_path = os.path.join(out_dir, f"{i}.png")
+                iou_threshold_out_path = os.path.join(iou_threshold_dir, f"{i}.png")
+                auc_threshold_out_path = os.path.join(auc_threshold_dir, f"{i}.png")
+
+                
                 model.segment_and_write_image_from_file(
                     sample.img_path,
                     out_path,
                     gts_path=sample.gt_path,
-                    threshold=self.get_optimal_threshold(model),
                 )
+                iou_threshold = (
+                    loss_metrics["iou_threshold"] if loss_metrics is not None else 0.5
+                )
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    iou_threshold_out_path,
+                    gts_path=sample.gt_path,
+                    threshold=iou_threshold,
+                )
+                auc_threshold = (
+                    loss_metrics["auc_threshold"] if loss_metrics is not None else 0.5
+                )
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    auc_threshold_out_path,
+                    gts_path=sample.gt_path,
+                    threshold=auc_threshold,
+                )
+
                 print(
                     f"{i+1}/{self.config.visualize_n_segmentations} {split} segmentations created\r",
                     end="",
@@ -177,12 +205,29 @@ class VesselHQExperiment(BaseExperiment):
         predict_visualize("train")
         predict_visualize("test")
 
-    def get_optimal_threshold(self, trained_model: BaseModel):
+    def calc_loss_metrics(self, trained_model: BaseModel):
         dl = self._create_dataloader("val")
-        batch = next(iter(dl))
+        num_batches = 5
+        all_metrics: list[dict[str, float]] = []
 
         with torch.no_grad():
-            out = trained_model.forward(batch.cuda())
-            l = trained_model.compute_loss(out, batch)
+            for _ in range(num_batches):
+                batch = next(iter(dl))
+                out = trained_model.forward(batch.cuda())
+                l = trained_model.compute_loss(out, batch)
+                if l.metrics is not None:
+                    all_metrics.append(l.metrics)
 
-        return l.metrics["optimal_threshold"] if l.metrics is not None else 0.5
+        # Aggregate metrics over all batches
+        aggregated_metrics = {}
+        for metrics in all_metrics:
+            for key, value in metrics.items():
+                if key not in aggregated_metrics: 
+                    aggregated_metrics[key] = []
+                aggregated_metrics[key].append(value)
+
+        # Compute mean of each metric
+        for key in aggregated_metrics:
+            aggregated_metrics[key] = sum(aggregated_metrics[key]) / len(aggregated_metrics[key])
+
+        return aggregated_metrics

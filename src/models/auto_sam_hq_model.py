@@ -2,12 +2,12 @@ from dataclasses import dataclass
 from email.mime import image
 from typing import List, Literal, Optional, Tuple
 from pydantic import BaseModel as PDBaseModel
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import auc, roc_auc_score, roc_curve
 
 from sympy import im, use
 import torch
 import torch.nn as nn
-from torch.nn import BCEWithLogitsLoss as BCELoss 
+from torch.nn import BCEWithLogitsLoss as BCELoss
 from torch.nn import functional as F
 from src.models.auto_sam_model import SAMBatch
 from src.args.yaml_config import YamlConfig
@@ -98,7 +98,6 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
             mode="nearest",
         )
 
-        
         bce = self.bce_loss.forward(outputs.logits, gts_sized)
         dice_loss = compute_dice_loss(normalized_logits, gts_sized)
         loss_value = bce + dice_loss
@@ -127,25 +126,36 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         binary_gts = gts.clone()
         binary_gts[binary_gts > 0.5] = 1
         binary_gts[binary_gts <= 0.5] = 0
-        roc = roc_auc_score(binary_gts.flatten().cpu(),masks.flatten().cpu())
-
-        optimal_threshold = self.get_optimal_threshold_iou(gts.squeeze().cpu().numpy(),masks.squeeze().cpu().numpy())
-
-        optimal_masks = masks.clone()
-
-        optimal_masks[optimal_masks > optimal_threshold] = 1
-        optimal_masks[optimal_masks <= optimal_threshold] = 0
-
-        optimal_dice_score, optimal_IoU = get_dice_ji(
-            optimal_masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
+        roc = roc_auc_score(binary_gts.flatten().cpu(), masks.flatten().cpu())
+        auc_threshold = self.get_optimal_threshold_auc(
+            binary_gts.flatten().cpu(), masks.flatten().cpu()
         )
+        auc_masks = masks.clone()
+        auc_masks[auc_masks > auc_threshold] = 1
+        auc_masks[auc_masks <= auc_threshold] = 0
+        auc_dice_score, auc_IoU = get_dice_ji(
+            auc_masks.squeeze().detach().cpu().numpy(),
+            gts.squeeze().detach().cpu().numpy(),
+        )
+
+        iou_threshold = self.get_optimal_threshold_iou(
+            gts.squeeze().cpu().numpy(), masks.squeeze().cpu().numpy()
+        )
+        iou_masks = masks.clone()
+        iou_masks[iou_masks > iou_threshold] = 1
+        iou_masks[iou_masks <= iou_threshold] = 0
+        iou_dice_score, iou_IoU = get_dice_ji(
+            iou_masks.squeeze().detach().cpu().numpy(),
+            gts.squeeze().detach().cpu().numpy(),
+        )
+
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
 
         dice_score, IoU = get_dice_ji(
             masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
         )
-       
+
         return Loss(
             loss_value,
             {
@@ -155,28 +165,31 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
                 "dice_score": dice_score,
                 "IoU": IoU,
                 "roc_auc": float(roc),
-                "optimal_threshold": float(optimal_threshold),
-                "optimal_dice_score": optimal_dice_score,
-                "optimal_IoU": optimal_IoU,
+                "iou_threshold": float(iou_threshold),
+                "iou_dice_score": iou_dice_score,
+                "iou_IoU": iou_IoU,
+                "auc_threshold": float(auc_threshold),
+                "auc_dice_score": auc_dice_score,
+                "auc_IoU": auc_IoU,
             },
         )
-    def get_optimal_threshold(self, y_true, y_score):
+
+    def get_optimal_threshold_auc(self, y_true, y_score):
         fpr, tpr, thresholds = roc_curve(y_true, y_score)
         j_scores = tpr - fpr
         optimal_idx = np.argmax(j_scores)
         return thresholds[optimal_idx]
-    
+
     def get_optimal_threshold_iou(self, y_true, y_score):
         best_iou = 0
         best_threshold = 0
         for threshold in np.linspace(0, 1, 100):
-            pred_masks = (y_score > threshold)
+            pred_masks = y_score > threshold
             _, iou = get_dice_ji(pred_masks, y_true)
             if iou > best_iou:
                 best_iou = iou
                 best_threshold = threshold
         return best_threshold
-
 
     def sam_call(
         self,
@@ -275,10 +288,11 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         output_path: str,
         mask_opacity: float = 0.4,
         gts_path: Optional[str] = None,
-        threshold = 0.5
+        threshold=0.5,
     ):
         import cv2
         from PIL import Image
+
         image, mask = self.segment_image_from_file(image_path)
         if gts_path is not None:
             with Image.open(gts_path) as im:
@@ -286,7 +300,6 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         else:
             gts = np.zeros_like(mask)
 
-        optimalMask = mask.copy()
         mask[mask > (255 * threshold)] = 255
         mask[mask <= (255 * threshold)] = 0
         overlay = (
@@ -295,25 +308,18 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         output_image = cv2.addWeighted(
             image, 1 - mask_opacity, overlay, mask_opacity, 0
         )
-        binary_gts = gts.copy()
-        binary_gts[binary_gts > 0.5] = 1
-        binary_gts[binary_gts <= 0.5] = 0
-        optimal_threshold = self.get_optimal_threshold(binary_gts.flatten(),optimalMask.flatten())
-
-
-        cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
-        optimalMask[optimalMask >  optimal_threshold] = 255
-        optimalMask[optimalMask <=  optimal_threshold] = 0
-
-        
-        overlay = (
-            np.array(optimalMask) * np.array([1, 0, 1]) + np.array(gts) * np.array([0, 1, 0])
-        ).astype(image.dtype)
-        output_image = cv2.addWeighted(
-            image, 1 - mask_opacity, overlay, mask_opacity, 0
+        cv2.putText(
+            output_image,
+            f"Threshold: {threshold:.2f}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
         )
 
-        cv2.imwrite(f"{output_path}_threshold.png", cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
 
 def compute_dice_loss(y_true, y_pred, smooth=1):
@@ -410,8 +416,6 @@ class MaskDecoderHQ(MaskDecoder):
 
         checkpoint_dict = {
             "vit_b": "/dhc/groups/mp2024cl2/sam_vit_b_maskdecoder.pth",
-            "vit_l": "pretrained_checkpoint/sam_vit_l_maskdecoder.pth",
-            "vit_h": "pretrained_checkpoint/sam_vit_h_maskdecoder.pth",
         }
         checkpoint_path = checkpoint_dict[model_type]
         self.load_state_dict(torch.load(checkpoint_path))
