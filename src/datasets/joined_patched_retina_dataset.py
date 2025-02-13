@@ -81,7 +81,11 @@ class PatchedVesselDataset(BaseDataset):
         )
 
     def get_split(self, split: Literal["train", "val", "test"]) -> Self:
-        return self.__class__(self.ds.get_split(split))
+        return self.__class__(
+            self.ds.get_split(split),
+            self.augment_train if split == "train" else False,
+            cast(Literal[4, 16], self.patches),
+        )
 
 
 class JoinedPatchedRetinaDataset(JoinedDataset):
