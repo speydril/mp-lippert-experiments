@@ -125,10 +125,11 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         )  # was mode=nearest in original code
 
         binary_gts = gts.clone()
-        binary_gts[binary_gts > 0] = 1
-        binary_gts[binary_gts <= 0] = 0
-        # roc = roc_auc_score(binary_gts.flatten().cpu(),masks.flatten().cpu())
-        optimal_threshold = self.get_optimal_threshold(binary_gts.flatten().cpu(),masks.detach().flatten().cpu())
+        binary_gts[binary_gts > 0.5] = 1
+        binary_gts[binary_gts <= 0.5] = 0
+        roc = roc_auc_score(binary_gts.flatten().cpu(),masks.flatten().cpu())
+
+        optimal_threshold = self.get_optimal_threshold_iou(gts.squeeze().cpu().numpy(),masks.squeeze().cpu().numpy())
 
         optimal_masks = masks.clone()
 
@@ -153,7 +154,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
                 "bce_loss": bce.detach().item(),
                 "dice_score": dice_score,
                 "IoU": IoU,
-                # "roc_auc": float(roc),
+                "roc_auc": float(roc),
                 "optimal_threshold": float(optimal_threshold),
                 "optimal_dice_score": optimal_dice_score,
                 "optimal_IoU": optimal_IoU,
@@ -164,6 +165,18 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         j_scores = tpr - fpr
         optimal_idx = np.argmax(j_scores)
         return thresholds[optimal_idx]
+    
+    def get_optimal_threshold_iou(self, y_true, y_score):
+        best_iou = 0
+        best_threshold = 0
+        for threshold in np.linspace(0, 1, 100):
+            pred_masks = (y_score > threshold)
+            _, iou = get_dice_ji(pred_masks, y_true)
+            if iou > best_iou:
+                best_iou = iou
+                best_threshold = threshold
+        return best_threshold
+
 
     def sam_call(
         self,
@@ -266,23 +279,41 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
     ):
         import cv2
         from PIL import Image
-        print(f"ideal threshold: {threshold}")
         image, mask = self.segment_image_from_file(image_path)
         if gts_path is not None:
             with Image.open(gts_path) as im:
                 gts = np.array(im.convert("RGB"))
         else:
             gts = np.zeros_like(mask)
-        mask[mask > 255 * threshold] = 255
-        mask[mask <= 255 * threshold] = 0
+
+        optimalMask = mask.copy()
+        mask[mask > (255 * threshold)] = 255
+        mask[mask <= (255 * threshold)] = 0
         overlay = (
             np.array(mask) * np.array([1, 0, 1]) + np.array(gts) * np.array([0, 1, 0])
         ).astype(image.dtype)
         output_image = cv2.addWeighted(
             image, 1 - mask_opacity, overlay, mask_opacity, 0
         )
+        binary_gts = gts.copy()
+        binary_gts[binary_gts > 0.5] = 1
+        binary_gts[binary_gts <= 0.5] = 0
+        optimal_threshold = self.get_optimal_threshold(binary_gts.flatten(),optimalMask.flatten())
+
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
+        optimalMask[optimalMask >  optimal_threshold] = 255
+        optimalMask[optimalMask <=  optimal_threshold] = 0
+
+        
+        overlay = (
+            np.array(optimalMask) * np.array([1, 0, 1]) + np.array(gts) * np.array([0, 1, 0])
+        ).astype(image.dtype)
+        output_image = cv2.addWeighted(
+            image, 1 - mask_opacity, overlay, mask_opacity, 0
+        )
+
+        cv2.imwrite(f"{output_path}_threshold.png", cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
 
 def compute_dice_loss(y_true, y_pred, smooth=1):
