@@ -61,7 +61,7 @@ class VesselHQExperiment(BaseExperiment):
         super().__init__(config, yaml_config)
 
     def get_name(self) -> str:
-        return "multi_ds_vessel_experiment"
+        return "vessel_hq_experiment"
 
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
