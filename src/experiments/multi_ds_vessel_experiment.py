@@ -1,7 +1,6 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
-from src.models.auto_sam_hq_model import AutoSamHQModel, AutoSamHQModelArgs
 from src.datasets.joined_patched_retina_dataset import JoinedPatchedRetinaDataset
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
