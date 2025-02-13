@@ -102,7 +102,7 @@
             "program": "${workspaceFolder}/run.py",
             "console": "integratedTerminal",
             "args": [
-                "--experiment_id=multi_ds_vessel",
+                "--experiment_id=vessel_hq",
                 "--sam_model=vit_b",
                 "--learning_rate=0.0003",
                 "--prompt_encoder_lr=0.003",
@@ -118,7 +118,8 @@
                 "--best_model_metric=IoU",
                 "--minimize_best_model_metric=false",
                 "--drive_test_equals_val=false",
-                "--use_hq=true"
+                "--only_test=true",
+                "--from_checkpoint=/dhc/home/hoangan.nguyen/mp-lippert-experiments/results/multi_ds_vessel_experiment/2025-02-12_12#30#58/model.pt"
             ]
         },
         {
@@ -170,6 +171,7 @@
                 "--minimize_best_model_metric=false",
                 "--prompt_encoder_checkpoint=results/multi_ds_vessel_experiment/2025-01-10_17#49#28/prompt_encoder.pt",
                 "--drive_test_equals_val=false"
+                
             ]
         },
         {

@@ -182,7 +182,7 @@ class VesselHQExperiment(BaseExperiment):
         batch = next(iter(dl))
 
         with torch.no_grad():
-            out = trained_model.forward(batch)
+            out = trained_model.forward(batch.cuda())
             l = trained_model.compute_loss(out, batch)
 
         return l.metrics["optimal_threshold"] if l.metrics is not None else 0.5

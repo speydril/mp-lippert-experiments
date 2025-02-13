@@ -124,8 +124,11 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
             gts, (self.config.Idim, self.config.Idim), mode="bilinear"
         )  # was mode=nearest in original code
 
-        roc = roc_auc_score(gts.flatten(),masks.flatten())
-        optimal_threshold = self.get_optimal_threshold(gts.flatten(),masks.flatten())
+        binary_gts = gts.clone()
+        binary_gts[binary_gts > 0] = 1
+        binary_gts[binary_gts <= 0] = 0
+        # roc = roc_auc_score(binary_gts.flatten().cpu(),masks.flatten().cpu())
+        optimal_threshold = self.get_optimal_threshold(binary_gts.flatten().cpu(),masks.detach().flatten().cpu())
 
         optimal_masks = masks.clone()
 
@@ -133,7 +136,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         optimal_masks[optimal_masks <= optimal_threshold] = 0
 
         optimal_dice_score, optimal_IoU = get_dice_ji(
-            masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
+            optimal_masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
         )
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
@@ -150,8 +153,8 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
                 "bce_loss": bce.detach().item(),
                 "dice_score": dice_score,
                 "IoU": IoU,
-                "roc_auc": float(roc),
-                "optimal_threshold": optimal_threshold,
+                # "roc_auc": float(roc),
+                "optimal_threshold": float(optimal_threshold),
                 "optimal_dice_score": optimal_dice_score,
                 "optimal_IoU": optimal_IoU,
             },
@@ -263,7 +266,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
     ):
         import cv2
         from PIL import Image
-
+        print(f"ideal threshold: {threshold}")
         image, mask = self.segment_image_from_file(image_path)
         if gts_path is not None:
             with Image.open(gts_path) as im:
