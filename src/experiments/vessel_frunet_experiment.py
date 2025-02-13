@@ -1,6 +1,7 @@
 from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
+from src.datasets.joined_patched_retina_dataset import JoinedPatchedRetinaDataset
 from src.models.fr_unet_model import FRUnet, FRUnetArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
@@ -30,14 +31,26 @@ class VesselFRUnetExperimentArgs(
     limit_train_samples: Optional[int] = Field(
         default=None, description="Limit number of training samples"
     )
+    patch_samples: Optional[Literal[4, 16]] = Field(
+        default=None, description="Patch samples into 4 or 16 parts"
+    )
 
 
 class VesselFRUnetExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
         self.config = VesselFRUnetExperimentArgs(**config)
 
-        self.ds = JoinedRetinaDataset.from_config(
-            self.config, yaml_config, self.config.seed
+        self.ds = (
+            JoinedPatchedRetinaDataset.from_config(
+                self.config,
+                yaml_config,
+                self.config.seed,
+                patches=self.config.patch_samples,
+            )
+            if self.config.patch_samples is not None
+            else JoinedRetinaDataset.from_config(
+                self.config, yaml_config, self.config.seed
+            )
         )
         super().__init__(config, yaml_config)
 
