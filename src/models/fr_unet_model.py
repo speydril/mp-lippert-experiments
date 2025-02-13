@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch import nn
 from timm.layers.weight_init import trunc_normal_
-
+from torch.nn import BCEWithLogitsLoss as BCELoss
 from src.args.yaml_config import YamlConfig
 from src.models.auto_sam_model import (
     SAMBatch,
@@ -275,12 +275,15 @@ from pydantic import BaseModel as PBaseModel
 
 class FRUnetArgs(PBaseModel):
     dropout: float = 0.2
+    Idim: int = 512
 
 
 class FRUnet(BaseModel[SAMBatch]):
     def __init__(self, config: FRUnetArgs):
         super().__init__()
         self.unet = _FR_UNet(num_channels=3, dropout=config.dropout)
+        self.bce_loss = BCELoss()
+        self.config = config
 
     def forward(self, batch: SAMBatch) -> ModelOutput:
         return ModelOutput(logits=self.unet(batch.input))
@@ -307,10 +310,10 @@ class FRUnet(BaseModel[SAMBatch]):
         input_size = tuple(batch.image_size[0][-2:].int().tolist())
         original_size = tuple(batch.original_size[0][-2:].int().tolist())
         gts = batch.target.unsqueeze(dim=0)
-        masks = self.sam.postprocess_masks(
+        masks = self.postprocess_masks(
             normalized_logits, input_size=input_size, original_size=original_size
         )
-        gts = self.sam.postprocess_masks(
+        gts = self.postprocess_masks(
             batch.target.unsqueeze(dim=0) if batch.target.dim() != 4 else batch.target,
             input_size=input_size,
             original_size=original_size,
