@@ -112,6 +112,10 @@ class ResizeLongestSide:
         x = F.pad(x, (0, padw, 0, padh))
         return x
 
+    def undo_normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """Undo normalization for visualization."""
+        return x * self.pixel_std + self.pixel_mean
+
     def apply_coords_torch(
         self, coords: torch.Tensor, original_size: Tuple[int, ...]
     ) -> torch.Tensor:
