@@ -17,6 +17,8 @@ from typing import cast
 import os
 from pydantic import Field
 
+from src.util.eval_util import evaluate_model
+
 
 class VesselHQExperimentArgs(
     BaseExperimentArgs,
@@ -80,7 +82,9 @@ class VesselHQExperiment(BaseExperiment):
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
         if split == "train":
-            return self.ds.get_split(split, limit_samples=self.config.limit_train_samples)
+            return self.ds.get_split(
+                split, limit_samples=self.config.limit_train_samples
+            )
         return self.ds.get_split(split)
 
     def _create_model(self) -> BaseModel:
@@ -124,7 +128,7 @@ class VesselHQExperiment(BaseExperiment):
         # See bottom of https://chatgpt.com/share/675ae2c8-fff4-800c-8a5b-cecc352df76a
 
         mask_decoder = cast(AutoSamHQModel, self.model).mask_decoder
-        
+
         params.append(
             {
                 "params": mask_decoder.parameters(),
@@ -165,6 +169,7 @@ class VesselHQExperiment(BaseExperiment):
 
     def run_after_training(self, trained_model: BaseModel):
         model = cast(AutoSamHQModel, trained_model)
+        val_metrics = evaluate_model(trained_model, self._create_dataloader("val"), 5)
 
         def predict_visualize(split: Literal["train", "test"]):
             out_dir = os.path.join(self.results_dir, f"{split}_visualizations")
@@ -174,7 +179,6 @@ class VesselHQExperiment(BaseExperiment):
             os.makedirs(iou_threshold_dir, exist_ok=True)
             os.makedirs(auc_threshold_dir, exist_ok=True)
             ds = self.ds.get_split(split)
-            loss_metrics = self.calc_loss_metrics(model)
 
             print(
                 f"\nCreating {self.config.visualize_n_segmentations} {split} segmentations"
@@ -185,24 +189,19 @@ class VesselHQExperiment(BaseExperiment):
                 iou_threshold_out_path = os.path.join(iou_threshold_dir, f"{i}.png")
                 auc_threshold_out_path = os.path.join(auc_threshold_dir, f"{i}.png")
 
-                
                 model.segment_and_write_image_from_file(
                     sample.img_path,
                     out_path,
                     gts_path=sample.gt_path,
                 )
-                iou_threshold = (
-                    loss_metrics["iou_threshold"] if loss_metrics is not None else 0.5
-                )
+                iou_threshold = val_metrics.get("iou_threshold", 0.5)
                 model.segment_and_write_image_from_file(
                     sample.img_path,
                     iou_threshold_out_path,
                     gts_path=sample.gt_path,
                     threshold=iou_threshold,
                 )
-                auc_threshold = (
-                    loss_metrics["auc_threshold"] if loss_metrics is not None else 0.5
-                )
+                auc_threshold = val_metrics.get("auc_threshold", 0.5)
                 model.segment_and_write_image_from_file(
                     sample.img_path,
                     auc_threshold_out_path,
@@ -268,30 +267,3 @@ class VesselHQExperiment(BaseExperiment):
 
         predict_visualize("train")
         predict_visualize("test")
-
-    def calc_loss_metrics(self, trained_model: BaseModel):
-        dl = self._create_dataloader("val")
-        num_batches = 5
-        all_metrics: list[dict[str, float]] = []
-
-        with torch.no_grad():
-            for _ in range(num_batches):
-                batch = next(iter(dl))
-                out = trained_model.forward(batch.cuda())
-                l = trained_model.compute_loss(out, batch)
-                if l.metrics is not None:
-                    all_metrics.append(l.metrics)
-
-        # Aggregate metrics over all batches
-        aggregated_metrics = {}
-        for metrics in all_metrics:
-            for key, value in metrics.items():
-                if key not in aggregated_metrics: 
-                    aggregated_metrics[key] = []
-                aggregated_metrics[key].append(value)
-
-        # Compute mean of each metric
-        for key in aggregated_metrics:
-            aggregated_metrics[key] = sum(aggregated_metrics[key]) / len(aggregated_metrics[key])
-
-        return aggregated_metrics

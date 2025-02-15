@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.nn import BCEWithLogitsLoss as BCELoss
 from torch.nn import functional as F
-from src.models.auto_sam_model import SAMBatch, get_dice_ji
+from src.models.auto_sam_model import SAMBatch
 from src.args.yaml_config import YamlConfig
 from src.models.base_model import BaseModel, ModelOutput, Loss
 from src.models.auto_sam_prompt_encoder.model_single import ModelEmb
@@ -25,7 +25,11 @@ from src.models.segment_anything_hq.segment_anything_training.modeling.common im
     LayerNorm2d,
 )
 from src.util.image_util import calc_iou, extract_patch, join_patches
-
+from src.util.eval_util import (
+    get_dice_ji,
+    get_optimal_threshold_auc,
+    get_optimal_threshold_iou,
+)
 
 
 class AutoSamHQModelArgs(PDBaseModel):
@@ -116,7 +120,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         binary_gts[binary_gts > 0.5] = 1
         binary_gts[binary_gts <= 0.5] = 0
         roc = roc_auc_score(binary_gts.flatten().cpu(), masks.flatten().cpu())
-        auc_threshold = self.get_optimal_threshold_auc(
+        auc_threshold = get_optimal_threshold_auc(
             binary_gts.flatten().cpu(), masks.flatten().cpu()
         )
         auc_masks = masks.clone()
@@ -127,7 +131,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
             gts.squeeze().detach().cpu().numpy(),
         )
 
-        iou_threshold = self.get_optimal_threshold_iou(
+        iou_threshold = get_optimal_threshold_iou(
             gts.squeeze().cpu().numpy(), masks.squeeze().cpu().numpy()
         )
         iou_masks = masks.clone()
@@ -162,23 +166,6 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
                 "auc_IoU": auc_IoU,
             },
         )
-
-    def get_optimal_threshold_auc(self, y_true, y_score):
-        fpr, tpr, thresholds = roc_curve(y_true, y_score)
-        j_scores = tpr - fpr
-        optimal_idx = np.argmax(j_scores)
-        return thresholds[optimal_idx]
-
-    def get_optimal_threshold_iou(self, y_true, y_score):
-        best_iou = 0
-        best_threshold = 0
-        for threshold in np.linspace(0, 1, 100):
-            pred_masks = y_score > threshold
-            _, iou = get_dice_ji(pred_masks, y_true)
-            if iou > best_iou:
-                best_iou = iou
-                best_threshold = threshold
-        return best_threshold
 
     def sam_call(
         self,
@@ -256,7 +243,9 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
         return image, mask
 
-    def segment_image_from_file(self, image_path: str, patches: Optional[Literal[4, 16]] = None):
+    def segment_image_from_file(
+        self, image_path: str, patches: Optional[Literal[4, 16]] = None
+    ):
         import cv2
 
         image = cv2.cvtColor(
@@ -308,7 +297,6 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         gts_path: Optional[str] = None,
         threshold=0.5,
         patches: Optional[Literal[4, 16]] = None,
-
     ):
         import cv2
         from PIL import Image
@@ -328,7 +316,7 @@ class AutoSamHQModel(BaseModel[SAMBatch]):
         output_image = cv2.addWeighted(
             image, 1 - mask_opacity, overlay, mask_opacity, 0
         )
-        if threshold is not 0.5:
+        if threshold != 0.5:
             cv2.putText(
                 output_image,
                 f"Threshold: {threshold:.2f}",

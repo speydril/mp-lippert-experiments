@@ -16,6 +16,7 @@ from src.schedulers.step_lr import StepLRArgs, create_steplr_scheduler
 from typing import cast
 import os
 from pydantic import Field
+from src.util.eval_util import evaluate_model
 
 
 class MultiDSVesselExperimentArgs(
@@ -163,10 +164,16 @@ class MultiDsVesselExperiment(BaseExperiment):
 
     def run_after_training(self, trained_model: BaseModel):
         model = cast(AutoSamModel, trained_model)
+        val_metrics = evaluate_model(trained_model, self._create_dataloader("val"), 5)
 
         def predict_visualize(split: Literal["train", "test"]):
             out_dir = os.path.join(self.results_dir, f"{split}_visualizations")
             os.makedirs(out_dir, exist_ok=True)
+            iou_threshold_dir = os.path.join(out_dir, "iou_threshold")
+            auc_threshold_dir = os.path.join(out_dir, "auc_threshold")
+            os.makedirs(iou_threshold_dir, exist_ok=True)
+            os.makedirs(auc_threshold_dir, exist_ok=True)
+
             ds = self.ds.get_split(split)
             print(
                 f"\nCreating {self.config.visualize_n_segmentations} {split} segmentations"
@@ -174,8 +181,24 @@ class MultiDsVesselExperiment(BaseExperiment):
             for i in range(min(len(ds), self.config.visualize_n_segmentations)):
                 sample = ds.get_file_refs()[i]
                 out_path = os.path.join(out_dir, f"{i}.png")
+                iou_threshold_out_path = os.path.join(iou_threshold_dir, f"{i}.png")
+                auc_threshold_out_path = os.path.join(auc_threshold_dir, f"{i}.png")
                 model.segment_and_write_image_from_file(
                     sample.img_path, out_path, gts_path=sample.gt_path
+                )
+                iou_threshold = val_metrics.get("iou_threshold", 0.5)
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    iou_threshold_out_path,
+                    gts_path=sample.gt_path,
+                    threshold=iou_threshold,
+                )
+                auc_threshold = val_metrics.get("auc_threshold", 0.5)
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    auc_threshold_out_path,
+                    gts_path=sample.gt_path,
+                    threshold=auc_threshold,
                 )
 
                 if self.config.patch_samples:
@@ -187,6 +210,40 @@ class MultiDsVesselExperiment(BaseExperiment):
                     model.segment_and_write_image_from_file(
                         sample.img_path,
                         patched_out_path,
+                        gts_path=sample.gt_path,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
+                    # IOU threshold optimized
+                    patched_iou_dir = os.path.join(
+                        iou_threshold_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_iou_out = os.path.join(patched_iou_dir, f"{i}.png")
+                    os.makedirs(patched_iou_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_iou_out,
+                        gts_path=sample.gt_path,
+                        threshold=iou_threshold,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
+                    # AUC threshold optimized
+                    patched_auc_dir = os.path.join(
+                        auc_threshold_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_auc_out = os.path.join(patched_auc_dir, f"{i}.png")
+                    os.makedirs(patched_auc_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_auc_out,
+                        threshold=auc_threshold,
                         gts_path=sample.gt_path,
                         patches=(
                             self.config.patch_samples

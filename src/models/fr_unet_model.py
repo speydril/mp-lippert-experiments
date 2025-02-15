@@ -9,7 +9,6 @@ from src.args.yaml_config import YamlConfig
 from src.models.auto_sam_model import (
     SAMBatch,
     compute_dice_loss,
-    get_dice_ji,
     norm_batch,
 )
 from src.models.base_model import BaseModel, Loss, ModelOutput
@@ -17,6 +16,7 @@ from torch.nn import functional as F
 
 from src.util.polyp_transform import get_polyp_transform
 from src.util.image_util import calc_iou
+from src.util.eval_util import get_dice_ji
 
 
 class InitWeights_He(object):
