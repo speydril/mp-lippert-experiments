@@ -85,7 +85,7 @@ class MultiDsVesselExperiment(BaseExperiment):
     def _create_model(self) -> BaseModel:
         image_encoder_no_grad = self.config.image_encoder_lr is None
         model = AutoSamModel(self.config, image_encoder_no_grad)
-          
+
         if self.config.prompt_encoder_checkpoint is not None:
             print(
                 f"loading prompt-encoder model from checkpoint {self.config.prompt_encoder_checkpoint}"
