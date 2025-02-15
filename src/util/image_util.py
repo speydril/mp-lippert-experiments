@@ -63,3 +63,8 @@ def join_patches(patches: list[np.ndarray]):
     top = np.concatenate([patches[0], patches[1]], axis=1)
     bottom = np.concatenate([patches[2], patches[3]], axis=1)
     return np.concatenate([top, bottom], axis=0)
+
+def calc_iou(pred: np.ndarray, gt: np.ndarray):
+    intersection = np.logical_and(pred, gt).sum()
+    union = np.logical_or(pred, gt).sum()
+    return intersection / union if union else 0.0

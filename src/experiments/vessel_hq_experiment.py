@@ -2,11 +2,11 @@ from typing import Literal, Any, Optional
 import torch
 from torch.optim.optimizer import Optimizer
 from src.datasets.joined_patched_retina_dataset import JoinedPatchedRetinaDataset
+from src.models.auto_sam_hq_model import AutoSamHQModel, AutoSamHQModelArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
 )
-from src.models.auto_sam_model import AutoSamModel, AutoSamModelArgs
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
 from src.models.base_model import BaseModel
 from src.args.yaml_config import YamlConfigModel
@@ -18,11 +18,11 @@ import os
 from pydantic import Field
 
 
-class MultiDSVesselExperimentArgs(
+class VesselHQExperimentArgs(
     BaseExperimentArgs,
     AdamArgs,
     StepLRArgs,
-    AutoSamModelArgs,
+    AutoSamHQModelArgs,
     JoinedRetinaDatasetArgs,
 ):
     prompt_encoder_checkpoint: Optional[str] = Field(
@@ -44,17 +44,20 @@ class MultiDSVesselExperimentArgs(
         description="Learning rate for prompt encoder, if None, general learning rate is used",
     )
     limit_train_samples: Optional[int] = Field(
-        default=None,
-        description="Limit number of training samples, i.e. image mask pairs to include (if patch_samples is True, this is the number of patches)",
+        default=None, description="Limit number of training samples"
+    )
+    mask_decoder_warmup_epochs: int = Field(
+        default=0,
+        description="Number of epochs to linearly warmup mask decoder lr to mask_decoder_lr value from 0",
     )
     patch_samples: Optional[Literal[4, 16]] = Field(
         default=None, description="Patch samples into 4 or 16 parts"
     )
 
 
-class MultiDsVesselExperiment(BaseExperiment):
+class VesselHQExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
-        self.config = MultiDSVesselExperimentArgs(**config)
+        self.config = VesselHQExperimentArgs(**config)
 
         self.ds = (
             JoinedPatchedRetinaDataset.from_config(
@@ -71,21 +74,19 @@ class MultiDsVesselExperiment(BaseExperiment):
         super().__init__(config, yaml_config)
 
     def get_name(self) -> str:
-        return "multi_ds_vessel_experiment"
+        return "vessel_hq_experiment"
 
     def _create_dataset(
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
         if split == "train":
-            return self.ds.get_split(
-                split, limit_samples=self.config.limit_train_samples
-            )
+            return self.ds.get_split(split, limit_samples=self.config.limit_train_samples)
         return self.ds.get_split(split)
 
     def _create_model(self) -> BaseModel:
         image_encoder_no_grad = self.config.image_encoder_lr is None
-        model = AutoSamModel(self.config, image_encoder_no_grad)
-          
+        model = AutoSamHQModel(self.config, image_encoder_no_grad)
+
         if self.config.prompt_encoder_checkpoint is not None:
             print(
                 f"loading prompt-encoder model from checkpoint {self.config.prompt_encoder_checkpoint}"
@@ -98,11 +99,11 @@ class MultiDsVesselExperiment(BaseExperiment):
 
     @classmethod
     def get_args_model(cls):
-        return MultiDSVesselExperimentArgs
+        return VesselHQExperimentArgs
 
     def create_optimizer(self) -> Optimizer:
         prompt_enc_params: dict = {
-            "params": cast(AutoSamModel, self.model).prompt_encoder.parameters(),
+            "params": cast(AutoSamHQModel, self.model).prompt_encoder.parameters(),
         }
         if self.config.prompt_encoder_lr is not None:
             prompt_enc_params["lr"] = self.config.prompt_encoder_lr
@@ -113,7 +114,7 @@ class MultiDsVesselExperiment(BaseExperiment):
             params.append(
                 {
                     "params": cast(
-                        AutoSamModel, self.model
+                        AutoSamHQModel, self.model
                     ).sam.image_encoder.parameters(),
                     "lr": self.config.image_encoder_lr,
                 }
@@ -122,7 +123,8 @@ class MultiDsVesselExperiment(BaseExperiment):
         # Always add mask decoder to optimizer to allow for Automatic Mixed Precision to work even when mask decoder isn't trained
         # See bottom of https://chatgpt.com/share/675ae2c8-fff4-800c-8a5b-cecc352df76a
 
-        mask_decoder = cast(AutoSamModel, self.model).sam.mask_decoder
+        mask_decoder = cast(AutoSamHQModel, self.model).mask_decoder
+        
         params.append(
             {
                 "params": mask_decoder.parameters(),
@@ -151,7 +153,7 @@ class MultiDsVesselExperiment(BaseExperiment):
         return "dice+bce"
 
     def store_trained_model(self, trained_model: torch.nn.Module):
-        model = cast(AutoSamModel, trained_model)
+        model = cast(AutoSamHQModel, trained_model)
         torch.save(
             model.prompt_encoder.state_dict(),
             os.path.join(self.results_dir, "prompt_encoder.pt"),
@@ -162,31 +164,61 @@ class MultiDsVesselExperiment(BaseExperiment):
         )
 
     def run_after_training(self, trained_model: BaseModel):
-        model = cast(AutoSamModel, trained_model)
+        model = cast(AutoSamHQModel, trained_model)
 
         def predict_visualize(split: Literal["train", "test"]):
             out_dir = os.path.join(self.results_dir, f"{split}_visualizations")
             os.makedirs(out_dir, exist_ok=True)
+            iou_threshold_dir = os.path.join(out_dir, "iou_threshold")
+            auc_threshold_dir = os.path.join(out_dir, "auc_threshold")
+            os.makedirs(iou_threshold_dir, exist_ok=True)
+            os.makedirs(auc_threshold_dir, exist_ok=True)
             ds = self.ds.get_split(split)
+            loss_metrics = self.calc_loss_metrics(model)
+
             print(
                 f"\nCreating {self.config.visualize_n_segmentations} {split} segmentations"
             )
             for i in range(min(len(ds), self.config.visualize_n_segmentations)):
                 sample = ds.get_file_refs()[i]
                 out_path = os.path.join(out_dir, f"{i}.png")
-                model.segment_and_write_image_from_file(
-                    sample.img_path, out_path, gts_path=sample.gt_path
-                )
+                iou_threshold_out_path = os.path.join(iou_threshold_dir, f"{i}.png")
+                auc_threshold_out_path = os.path.join(auc_threshold_dir, f"{i}.png")
 
+                
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    out_path,
+                    gts_path=sample.gt_path,
+                )
+                iou_threshold = (
+                    loss_metrics["iou_threshold"] if loss_metrics is not None else 0.5
+                )
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    iou_threshold_out_path,
+                    gts_path=sample.gt_path,
+                    threshold=iou_threshold,
+                )
+                auc_threshold = (
+                    loss_metrics["auc_threshold"] if loss_metrics is not None else 0.5
+                )
+                model.segment_and_write_image_from_file(
+                    sample.img_path,
+                    auc_threshold_out_path,
+                    gts_path=sample.gt_path,
+                    threshold=auc_threshold,
+                )
                 if self.config.patch_samples:
+                    # Normal
                     patched_out_dir = os.path.join(
                         out_dir, f"{self.config.patch_samples}patched"
                     )
-                    patched_out_path = os.path.join(patched_out_dir, f"{i}.png")
+                    patched_auc_out = os.path.join(patched_out_dir, f"{i}.png")
                     os.makedirs(patched_out_dir, exist_ok=True)
                     model.segment_and_write_image_from_file(
                         sample.img_path,
-                        patched_out_path,
+                        patched_auc_out,
                         gts_path=sample.gt_path,
                         patches=(
                             self.config.patch_samples
@@ -194,6 +226,41 @@ class MultiDsVesselExperiment(BaseExperiment):
                             else None
                         ),
                     )
+                    # IOU threshold optimized
+                    patched_iou_dir = os.path.join(
+                        iou_threshold_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_iou_out = os.path.join(patched_iou_dir, f"{i}.png")
+                    os.makedirs(patched_iou_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_iou_out,
+                        gts_path=sample.gt_path,
+                        threshold=iou_threshold,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
+                    # AUC threshold optimized
+                    patched_auc_dir = os.path.join(
+                        auc_threshold_dir, f"{self.config.patch_samples}patched"
+                    )
+                    patched_auc_out = os.path.join(patched_auc_dir, f"{i}.png")
+                    os.makedirs(patched_auc_dir, exist_ok=True)
+                    model.segment_and_write_image_from_file(
+                        sample.img_path,
+                        patched_auc_out,
+                        threshold=auc_threshold,
+                        gts_path=sample.gt_path,
+                        patches=(
+                            self.config.patch_samples
+                            if self.config.patch_samples
+                            else None
+                        ),
+                    )
+
                 print(
                     f"{i+1}/{self.config.visualize_n_segmentations} {split} segmentations created\r",
                     end="",
@@ -201,3 +268,30 @@ class MultiDsVesselExperiment(BaseExperiment):
 
         predict_visualize("train")
         predict_visualize("test")
+
+    def calc_loss_metrics(self, trained_model: BaseModel):
+        dl = self._create_dataloader("val")
+        num_batches = 5
+        all_metrics: list[dict[str, float]] = []
+
+        with torch.no_grad():
+            for _ in range(num_batches):
+                batch = next(iter(dl))
+                out = trained_model.forward(batch.cuda())
+                l = trained_model.compute_loss(out, batch)
+                if l.metrics is not None:
+                    all_metrics.append(l.metrics)
+
+        # Aggregate metrics over all batches
+        aggregated_metrics = {}
+        for metrics in all_metrics:
+            for key, value in metrics.items():
+                if key not in aggregated_metrics: 
+                    aggregated_metrics[key] = []
+                aggregated_metrics[key].append(value)
+
+        # Compute mean of each metric
+        for key in aggregated_metrics:
+            aggregated_metrics[key] = sum(aggregated_metrics[key]) / len(aggregated_metrics[key])
+
+        return aggregated_metrics
