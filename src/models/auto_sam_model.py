@@ -53,6 +53,7 @@ sam_model_registry = {
 class SAMBatch(Batch):
     original_size: torch.Tensor
     image_size: torch.Tensor
+    metadata: Optional[dict] = None
 
 
 @dataclass

@@ -4,7 +4,7 @@ import torch
 from typing_extensions import Self
 from src.datasets.joined_retina_dataset import JoinedRetinaDatasetArgs
 from src.datasets.aria_dataset import ARIADataset
-from src.models.auto_sam_model import SAMSampleFileReference
+from src.models.auto_sam_model import SAMBatch, SAMSampleFileReference
 from src.args.yaml_config import YamlConfigModel
 from src.datasets.base_dataset import BaseDataset, JoinedDataset, Sample
 from src.datasets.chasedb1_dataset import (
@@ -24,6 +24,8 @@ class PatchedVesselSample(Sample):
     original_size: torch.Tensor
     image_size: torch.Tensor
     origin_dataset: str
+    origin_sample_idx: int
+    intra_sample_idx: int
 
 
 class PatchedVesselDataset(BaseDataset):
@@ -42,7 +44,8 @@ class PatchedVesselDataset(BaseDataset):
         return len(self.ds) * (self.patches)
 
     def __getitem__(self, index: int) -> Sample:
-        sample = self.ds.samples[floor(index / self.patches)]
+        origin_sample_idx = floor(index / self.patches)
+        sample = self.ds.samples[origin_sample_idx]
         train_transform, test_transform = get_polyp_transform()
 
         augmentations = (
@@ -55,9 +58,11 @@ class PatchedVesselDataset(BaseDataset):
         gt = self.ds.cv2_loader(sample.gt_path, is_mask=True)
         # image shape: (H,W,3), gt shape: (H,W)
         quadrant_id = index % 4
+        intra_sample_idx = index % self.patches
         image, gt = extract_patch(image, quadrant_id), extract_patch(gt, quadrant_id)
         if self.patches == 16:
             subquadrant_id = (index // 4) % 4
+
             image, gt = extract_patch(image, subquadrant_id), extract_patch(
                 gt, subquadrant_id
             )
@@ -78,6 +83,8 @@ class PatchedVesselDataset(BaseDataset):
             original_size=torch.Tensor(original_size),
             image_size=torch.Tensor(image_size),
             origin_dataset=self.ds.__class__.__name__,
+            origin_sample_idx=origin_sample_idx,
+            intra_sample_idx=intra_sample_idx,
         )
 
     def get_split(self, split: Literal["train", "val", "test"]) -> Self:
@@ -86,6 +93,9 @@ class PatchedVesselDataset(BaseDataset):
             self.augment_train if split == "train" else False,
             cast(Literal[4, 16], self.patches),
         )
+
+
+import random
 
 
 class JoinedPatchedRetinaDataset(JoinedDataset):
@@ -99,6 +109,19 @@ class JoinedPatchedRetinaDataset(JoinedDataset):
         self.limit_samples = limit_samples
         super().__init__(datasets, collate, seed)  # type: ignore
         self.datasets = cast(list[PatchedVesselDataset], self.datasets)
+
+        # Ensure that patches beyond dataset limit are not mixed in
+        patchings = {ds.patches for ds in self.datasets}
+        assert (
+            len(patchings) == 1
+        ), "Only one kind of patching is supported at the same time"
+        patches = patchings.pop()
+        origin_idxs = list(range(floor(self._get_total_n_samples() / patches)))
+        random.shuffle(origin_idxs)
+        self.index_map = [
+            origin_idxs[floor(i / patches)] * patches + i % patches
+            for i in range(len(origin_idxs) * patches)
+        ]
 
     def get_file_refs(self) -> list[SAMSampleFileReference]:
         return [sample for ds in self.datasets for sample in ds.samples]
@@ -127,7 +150,7 @@ class JoinedPatchedRetinaDataset(JoinedDataset):
                 )
                 for ds in datasets
             ],
-            drive.get_collate_fn(),
+            JoinedPatchedRetinaDataset.get_collate_fn(),
             seed=seed,
         )
 
@@ -147,3 +170,32 @@ class JoinedPatchedRetinaDataset(JoinedDataset):
             limit_samples=limit_samples,
             seed=self.seed,
         )
+
+    @classmethod
+    def get_collate_fn(cls):
+        def collate(samples: list[PatchedVesselSample]):
+            inputs = torch.stack([s.input for s in samples])
+            targets = torch.stack([s.target for s in samples])
+            original_size = torch.stack([s.original_size for s in samples])
+            image_size = torch.stack([s.image_size for s in samples])
+
+            meta = {
+                "sample_metadata": [
+                    {
+                        "intra_sample_idx": s.intra_sample_idx,
+                        "origin_dataset": s.origin_dataset,
+                        "origin_sample_idx": f"{s.origin_dataset}_{s.origin_sample_idx}",
+                    }
+                    for s in samples
+                ]
+            }
+
+            return SAMBatch(
+                inputs,
+                targets,
+                original_size=original_size,
+                image_size=image_size,
+                metadata=meta,
+            )
+
+        return collate
