@@ -242,7 +242,7 @@ class Trainer:
 
             if (
                 self.config.early_stopping_patience is not None
-                and len(epoch_losses) >= self.config.early_stopping_patience
+                and len(history) >= self.config.early_stopping_patience
             ):
                 relevant_metric_history = [
                     get_relevant_metric(epoch_loss.val_losses) for epoch_loss in history
