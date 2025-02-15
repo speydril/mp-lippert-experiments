@@ -115,7 +115,11 @@ class JoinedPatchedRetinaDataset(JoinedDataset):
         assert (
             len(patchings) == 1
         ), "Only one kind of patching is supported at the same time"
+
         patches = patchings.pop()
+        assert (
+            self._get_total_n_samples() % patches == 0
+        ), "Total number of samples must be divisible by patches"
         origin_idxs = list(range(floor(self._get_total_n_samples() / patches)))
         random.shuffle(origin_idxs)
         self.index_map = [
