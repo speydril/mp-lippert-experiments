@@ -116,7 +116,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
         bce_loss = self.calculate_bce_loss(
             outputs.logits, gts_sized, confidence_thresholding
         )
-        dice_loss = self.compute_dice_loss(
+        dice_loss = self.compute_dice_loss_w_thresholding(
             normalized_logits, gts_sized, enable_thresholding=confidence_thresholding
         )
         loss_value = bce_loss + dice_loss
@@ -168,26 +168,25 @@ class AutoSamModel(BaseModel[SAMBatch]):
         auc_masks[auc_masks <= auc_threshold] = 0
         auc_dice_score, auc_IoU = get_dice_ji(
             auc_masks.squeeze().detach().cpu().numpy(),
-            gts.squeeze().detach().cpu().numpy(),
+            binary_gts.squeeze().detach().cpu().numpy(),
         )
 
         iou_threshold = get_optimal_threshold_iou(
-            gts.squeeze().cpu().numpy(), masks.detach().squeeze().cpu().numpy()
+            binary_gts.squeeze().cpu().numpy(), masks.detach().squeeze().cpu().numpy()
         )
         iou_masks = masks.clone()
         iou_masks[iou_masks > iou_threshold] = 1
         iou_masks[iou_masks <= iou_threshold] = 0
         iou_dice_score, iou_IoU = get_dice_ji(
             iou_masks.squeeze().detach().cpu().numpy(),
-            gts.squeeze().detach().cpu().numpy(),
+            binary_gts.squeeze().detach().cpu().numpy(),
         )
 
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
-        gts[gts > 0.5] = 1
-        gts[gts <= 0.5] = 0
         dice_score, IoU = get_dice_ji(
-            masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
+            masks.squeeze().detach().cpu().numpy(),
+            binary_gts.squeeze().detach().cpu().numpy(),
         )
 
         return Loss(
@@ -382,7 +381,9 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
-    def compute_dice_loss(self, y_true, y_pred, smooth=1, enable_thresholding=False):
+    def compute_dice_loss_w_thresholding(
+        self, y_true, y_pred, smooth=1, enable_thresholding=False
+    ):
         if (
             enable_thresholding
             and self.config.lower_confidence_quantile is not None
@@ -392,13 +393,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
             y_true = y_true * loss_mask
             y_pred = y_pred * loss_mask
 
-        alpha = 0.5
-        beta = 0.5
-        tp = torch.sum(y_true * y_pred, dim=(1, 2, 3))
-        fn = torch.sum(y_true * (1 - y_pred), dim=(1, 2, 3))
-        fp = torch.sum((1 - y_true) * y_pred, dim=(1, 2, 3))
-        tversky_class = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
-        return 1 - torch.mean(tversky_class)
+        return compute_dice_loss(y_true, y_pred, smooth)
 
 
 def get_input_dict(imgs, original_sz, img_sz):
@@ -455,3 +450,13 @@ def sam_call(
         multimask_output=False,
     )
     return low_res_masks
+
+
+def compute_dice_loss(y_true, y_pred, smooth=1):
+    alpha = 0.5
+    beta = 0.5
+    tp = torch.sum(y_true * y_pred, dim=(1, 2, 3))
+    fn = torch.sum(y_true * (1 - y_pred), dim=(1, 2, 3))
+    fp = torch.sum((1 - y_true) * y_pred, dim=(1, 2, 3))
+    tversky_class = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
+    return 1 - torch.mean(tversky_class)
