@@ -52,7 +52,10 @@ def _parser_from_model(parser: argparse.ArgumentParser, model: Type[BaseModel]):
             is_list = field_type_name == "list"
 
             if is_literal:
-                return {"type": str, "choices": field_type.__args__}
+                return {
+                    "type": type(field_type.__args__[0]),
+                    "choices": field_type.__args__,
+                }
             if is_bool:
                 return {"type": str_to_bool}
             if is_list:

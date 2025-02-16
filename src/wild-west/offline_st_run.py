@@ -48,7 +48,7 @@ def run_teacher_pretraining1(n_teacher_samples: str):
         / "multi_ds_vessel_experiment"
         / teacher_experiment_subdir_name
     )
-    tags = f'["OfflineST","TeacherTraining1","VesselSeg","GT","PromptEncoder", "{n_teacher_samples}_samples"]'
+    tags = f'["OfflineST","TeacherTraining","TeacherTraining1","VesselSeg","GT","PromptEncoder", "{n_teacher_samples}_samples"]'
 
     print(f"Training teacher prompt encoder only...")
     train_teacher_cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.003 --prompt_encoder_lr=0.003 --batch_size=8 --epochs=30 --weight_decay=1e-4 --early_stopping_patience=10 --visualize_n_segmentations=5 --gamma=0.9 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --drive_test_equals_val=false --use_wandb=true --wandb_experiment_name={debug_prefix}gt_vessels_offlineST_teacher1_{n_teacher_samples}_samples --amp=true --results_subdir_name={teacher_experiment_subdir_name} --wandb_tags={shlex.quote(tags)}"
@@ -72,7 +72,7 @@ def run_teacher_pretraining2(n_teacher_samples: str, teacher_checkpoint: str):
         / "multi_ds_vessel_experiment"
         / teacher_experiment_subdir_name
     )
-    tags = f'["OfflineST","TeacherTraining2","VesselSeg","GT","FullModel", "{n_teacher_samples}_samples"]'
+    tags = f'["OfflineST","TeacherTraining","TeacherTraining2","VesselSeg","GT","FullModel", "{n_teacher_samples}_samples"]'
 
     print(f"Training teacher full model...")
     train_teacher_cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --prompt_encoder_lr=0.0001 --image_encoder_lr=0.00001 --mask_decoder_lr=0.0001 --batch_size=3 --epochs=50 --weight_decay=1e-4 --early_stopping_patience=10 --visualize_n_segmentations=5 --gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --drive_test_equals_val=false --use_wandb=true --wandb_experiment_name={debug_prefix}gt_vessels_offlineST_teacher_{n_teacher_samples}_samples --amp=true --results_subdir_name={teacher_experiment_subdir_name} --wandb_tags={shlex.quote(tags)} --from_checkpoint={teacher_checkpoint}"
@@ -111,7 +111,7 @@ def run_student_st(
         f"offlineST_student_{n_teacher_samples}_samples_{dir_suffix}"
     )
     tags = f'["OfflineST","StudentTraining","VesselSeg","PseudoLabels", "FullModel", "{n_teacher_samples}_samples"]'
-    cmd = f"run.py --experiment_id=uk_biobank_experiment --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=3 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={teacher_checkpoint} --image_encoder_lr=0.00005 --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}ukbiobank_offlineST_teacher{n_teacher_samples}samples --augment_train=false --pseudo_labels_dir={pseudo_labels_dir_name} --results_subdir_name={student_experiment_subdir_name}"
+    cmd = f"python run.py --experiment_id=uk_biobank_experiment --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=3 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={teacher_checkpoint} --image_encoder_lr=0.00005 --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}ukbiobank_offlineST_teacher{n_teacher_samples}samples --augment_train=false --pseudo_labels_dir={pseudo_labels_dir_name} --results_subdir_name={student_experiment_subdir_name}"
     if limit != None:
         cmd += f" --limit={limit}"
     cmd += f" --wandb_tags={shlex.quote(tags)}"
@@ -131,8 +131,8 @@ def run_student_st(
 def run_full_fine_tuning(
     prefix: Literal["NoST", "OfflineST"], n_teacher_samples: str, checkpoint_path: str
 ):
-    subdir_name = f"{prefix}_fft_{n_teacher_samples}_samples_{dir_suffix}"
-    cmd = f"run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=4 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=4 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00005 --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
+    subdir_name = f"{prefix}_student_fft_{n_teacher_samples}_samples_{dir_suffix}"
+    cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=3 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=4 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00005 --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
     if n_teacher_samples != "all":
         cmd += f" --limit_train_samples={n_teacher_samples}"
 
@@ -148,7 +148,9 @@ def run_full_fine_tuning(
         tags.append("Baseline")
     cmd += f" --wandb_tags={shlex.quote(json.dumps(tags))}"
     exec(cmd)
-    checkpoint_dir = Path(yaml_config.results_dir) / "multi_ds_vessel" / subdir_name
+    checkpoint_dir = (
+        Path(yaml_config.results_dir) / "multi_ds_vessel_experiment" / subdir_name
+    )
     dirs = os.listdir(checkpoint_dir)
     assert len(dirs) == 1, f"Expected 1 dir in {checkpoint_dir}, got {len(dirs)}"
     return checkpoint_dir / dirs[0] / "model.pt"

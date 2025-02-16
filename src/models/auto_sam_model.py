@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from cv2 import norm
+from sklearn.metrics import roc_auc_score
 import torch
 from src.models.segment_anything.modeling.sam import SamBatched
 from src.args.yaml_config import YamlConfig
@@ -19,16 +19,12 @@ from src.models.auto_sam_prompt_encoder.model_single import ModelEmb
 from torch.nn import functional as F
 import numpy as np
 
-
-def get_dice_ji(predict, target):
-    predict = predict + 1
-    target = target + 1
-    tp = np.sum(((predict == 2) * (target == 2)) * (target > 0))
-    fp = np.sum(((predict == 2) * (target == 1)) * (target > 0))
-    fn = np.sum(((predict == 1) * (target == 2)) * (target > 0))
-    ji = float(np.nan_to_num(tp / (tp + fp + fn)))
-    dice = float(np.nan_to_num(2 * tp / (2 * tp + fp + fn)))
-    return dice, ji
+from src.util.image_util import calc_iou, extract_patch, join_patches
+from src.util.eval_util import (
+    get_dice_ji,
+    get_optimal_threshold_auc,
+    get_optimal_threshold_iou,
+)
 
 
 class AutoSamModelArgs(PDBaseModel):
@@ -60,6 +56,7 @@ sam_model_registry = {
 class SAMBatch(Batch):
     original_size: torch.Tensor
     image_size: torch.Tensor
+    metadata: Optional[dict] = None
 
 
 @dataclass
@@ -157,6 +154,34 @@ class AutoSamModel(BaseModel[SAMBatch]):
             gts[gradient_mask == 0] = 0
             masks[gradient_mask == 0] = 0
 
+        binary_gts = gts.clone()
+        binary_gts[binary_gts > 0.5] = 1
+        binary_gts[binary_gts <= 0.5] = 0
+        roc = roc_auc_score(
+            binary_gts.detach().flatten().cpu(), masks.detach().flatten().cpu()
+        )
+        auc_threshold = get_optimal_threshold_auc(
+            binary_gts.flatten().cpu(), masks.detach().flatten().cpu()
+        )
+        auc_masks = masks.clone()
+        auc_masks[auc_masks > auc_threshold] = 1
+        auc_masks[auc_masks <= auc_threshold] = 0
+        auc_dice_score, auc_IoU = get_dice_ji(
+            auc_masks.squeeze().detach().cpu().numpy(),
+            gts.squeeze().detach().cpu().numpy(),
+        )
+
+        iou_threshold = get_optimal_threshold_iou(
+            gts.squeeze().cpu().numpy(), masks.detach().squeeze().cpu().numpy()
+        )
+        iou_masks = masks.clone()
+        iou_masks[iou_masks > iou_threshold] = 1
+        iou_masks[iou_masks <= iou_threshold] = 0
+        iou_dice_score, iou_IoU = get_dice_ji(
+            iou_masks.squeeze().detach().cpu().numpy(),
+            gts.squeeze().detach().cpu().numpy(),
+        )
+
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
         gts[gts > 0.5] = 1
@@ -173,6 +198,13 @@ class AutoSamModel(BaseModel[SAMBatch]):
                 "bce_loss": bce_loss.detach().item(),
                 "dice_score": dice_score,
                 "IoU": IoU,
+                "roc_auc": float(roc),
+                "optimal_iou_threshold": float(iou_threshold),
+                "optimal_iou_threshold_dice_score": iou_dice_score,
+                "optimal_iou_threshold_IoU": iou_IoU,
+                "optimal_auc_threshold": float(auc_threshold),
+                "optimal_auc_threshold_dice_score": auc_dice_score,
+                "optimal_auc_threshold_IoU": auc_IoU,
             },
         )
 
@@ -252,7 +284,9 @@ class AutoSamModel(BaseModel[SAMBatch]):
         mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
         return image, mask
 
-    def segment_image_from_file(self, image_path: str):
+    def segment_image_from_file(
+        self, image_path: str, patches: Optional[Literal[4, 16]] = None
+    ):
         import cv2
 
         image = cv2.cvtColor(
@@ -263,6 +297,36 @@ class AutoSamModel(BaseModel[SAMBatch]):
             yaml_config.fundus_pixel_mean,
             yaml_config.fundus_pixel_std,
         )
+        if patches is not None:
+            img_patches = [extract_patch(image, i) for i in range(4)]
+
+            if patches == 4:
+                masks = [
+                    self.segment_image(
+                        img, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
+                    )[1]
+                    for img in img_patches
+                ]
+            else:
+                masks = []
+                for patch in img_patches:
+                    sub_patches = [extract_patch(patch, i) for i in range(4)]
+                    masks.append(
+                        join_patches(
+                            [
+                                self.segment_image(
+                                    sub_patch,
+                                    pixel_mean,
+                                    pixel_std,
+                                    yaml_config.fundus_resize_img_size,
+                                )[1]
+                                for sub_patch in sub_patches
+                            ]
+                        )
+                    )
+            mask = join_patches(masks)
+            return image, mask
+
         return self.segment_image(
             image, pixel_mean, pixel_std, yaml_config.fundus_resize_img_size
         )
@@ -273,23 +337,47 @@ class AutoSamModel(BaseModel[SAMBatch]):
         output_path: str,
         mask_opacity: float = 0.4,
         gts_path: Optional[str] = None,
+        threshold=0.5,
+        patches: Optional[Literal[4, 16]] = None,
     ):
         import cv2
         from PIL import Image
 
-        image, mask = self.segment_image_from_file(image_path)
+        image, mask = self.segment_image_from_file(image_path, patches)
         if gts_path is not None:
             with Image.open(gts_path) as im:
                 gts = np.array(im.convert("RGB"))
         else:
             gts = np.zeros_like(mask)
-        mask[mask > 255 / 2] = 255
-        mask[mask <= 255 / 2] = 0
+        mask[mask > 255 * threshold] = 255
+        mask[mask <= 255 * threshold] = 0
         overlay = (
             np.array(mask) * np.array([1, 0, 1]) + np.array(gts) * np.array([0, 1, 0])
         ).astype(image.dtype)
         output_image = cv2.addWeighted(
             image, 1 - mask_opacity, overlay, mask_opacity, 0
+        )
+        if threshold != 0.5:
+            cv2.putText(
+                output_image,
+                f"Threshold: {threshold:.2f}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        iou = calc_iou(mask, gts)
+        cv2.putText(
+            output_image,
+            f"IoU: {iou:.2f}",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
         )
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))

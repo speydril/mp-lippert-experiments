@@ -1,6 +1,7 @@
-from typing import cast
+from typing import Literal, cast
 import cv2
 from git import Optional
+import numpy as np
 import torch
 import pickle
 import os
@@ -42,3 +43,28 @@ def calculate_rgb_mean_std(img_paths: list[str], cache_path: Optional[str] = Non
         with open(cache_path, "wb") as f:
             pickle.dump(result, f)
     return result
+
+
+def extract_patch(img: np.ndarray, quadrant_id: int):
+    """img shape must have height and width as the first two channels, i.e.  (H,W,C) or (H,W)"""
+    quadrant_id = quadrant_id % 4
+    if quadrant_id == 0:
+        return img[: img.shape[0] // 2, : img.shape[1] // 2]
+    elif quadrant_id == 1:
+        return img[: img.shape[0] // 2, img.shape[1] // 2 :]
+    elif quadrant_id == 2:
+        return img[img.shape[0] // 2 :, : img.shape[1] // 2]
+    return img[img.shape[0] // 2 :, img.shape[1] // 2 :]
+
+
+def join_patches(patches: list[np.ndarray]):
+    """patches must be in the order [top_left, top_right, bottom_left, bottom_right]"""
+    assert len(patches) == 4
+    top = np.concatenate([patches[0], patches[1]], axis=1)
+    bottom = np.concatenate([patches[2], patches[3]], axis=1)
+    return np.concatenate([top, bottom], axis=0)
+
+def calc_iou(pred: np.ndarray, gt: np.ndarray):
+    intersection = np.logical_and(pred, gt).sum()
+    union = np.logical_or(pred, gt).sum()
+    return intersection / union if union else 0.0
