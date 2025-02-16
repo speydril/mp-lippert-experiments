@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import roc_auc_score
 import torch
 from src.models.segment_anything.modeling.sam import SamBatched
 from src.args.yaml_config import YamlConfig
@@ -13,7 +13,7 @@ from src.models.segment_anything.build_sam import (
 )
 from src.models.base_model import BaseModel, ModelOutput, Loss
 from src.datasets.base_dataset import Batch
-from pydantic import BaseModel as PDBaseModel
+from pydantic import BaseModel as PDBaseModel, Field
 from torch.nn import BCEWithLogitsLoss as BCELoss
 from src.models.auto_sam_prompt_encoder.model_single import ModelEmb
 from torch.nn import functional as F
@@ -34,6 +34,14 @@ class AutoSamModelArgs(PDBaseModel):
     hard_net_arch: int = 68
     depth_wise: bool = False
     Idim: int = 512
+    lower_confidence_quantile: Optional[float] = Field(
+        default=None,
+        description="Lower quantile of confidence of targets, should be between 0.0 and 0.5 with 0.5 being the least restrictive",
+    )
+    upper_confidence_quantile: Optional[float] = Field(
+        default=None,
+        description="Upper quantile of confidence of targets, should be between 0.5 and 1.0 with 0.5 being the least restrictive",
+    )
 
 
 sam_model_registry = {
@@ -64,7 +72,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
         self.sam = sam_model_registry[config.sam_model](
             checkpoint=config.sam_checkpoint
         )
-        self.bce_loss = BCELoss()
+        self.bce_loss = BCELoss(reduction="none")
         self.prompt_encoder = ModelEmb(
             hard_net_arch=config.hard_net_arch,
             depth_wise=config.depth_wise,
@@ -85,7 +93,12 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         return ModelOutput(masks)
 
-    def compute_loss(self, outputs: ModelOutput, batch: SAMBatch) -> Loss:
+    def compute_loss(
+        self,
+        outputs: ModelOutput,
+        batch: SAMBatch,
+        confidence_thresholding: bool = False,
+    ) -> Loss:
         assert batch.target is not None
 
         normalized_logits = norm_batch(outputs.logits)
@@ -100,9 +113,13 @@ class AutoSamModel(BaseModel[SAMBatch]):
             mode="nearest",
         )
 
-        bce = self.bce_loss.forward(outputs.logits, gts_sized)
-        dice_loss = compute_dice_loss(normalized_logits, gts_sized)
-        loss_value = bce + dice_loss
+        bce_loss = self.calculate_bce_loss(
+            outputs.logits, gts_sized, confidence_thresholding
+        )
+        dice_loss = self.compute_dice_loss(
+            normalized_logits, gts_sized, enable_thresholding=confidence_thresholding
+        )
+        loss_value = bce_loss + dice_loss
 
         input_size = tuple(batch.image_size[0][-2:].int().tolist())
         original_size = tuple(batch.original_size[0][-2:].int().tolist())
@@ -124,6 +141,18 @@ class AutoSamModel(BaseModel[SAMBatch]):
         gts = F.interpolate(
             gts, (self.config.Idim, self.config.Idim), mode="bilinear"
         )  # was mode=nearest in original code
+
+        if (
+            confidence_thresholding
+            and self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        ):
+            assert gts.max() <= 1
+            assert gts.min() >= 0
+            gradient_mask = self._get_gradient_mask(gts)
+            # Set everything to 0 were the confidence is below the threshold
+            gts[gradient_mask == 0] = 0
+            masks[gradient_mask == 0] = 0
 
         binary_gts = gts.clone()
         binary_gts[binary_gts > 0.5] = 1
@@ -155,6 +184,8 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
+        gts[gts > 0.5] = 1
+        gts[gts <= 0.5] = 0
         dice_score, IoU = get_dice_ji(
             masks.squeeze().detach().cpu().numpy(), gts.squeeze().detach().cpu().numpy()
         )
@@ -164,7 +195,7 @@ class AutoSamModel(BaseModel[SAMBatch]):
             {
                 "dice+bce_loss": loss_value.detach().item(),
                 "dice_loss": dice_loss.detach().item(),
-                "bce_loss": bce.detach().item(),
+                "bce_loss": bce_loss.detach().item(),
                 "dice_score": dice_score,
                 "IoU": IoU,
                 "roc_auc": float(roc),
@@ -175,6 +206,42 @@ class AutoSamModel(BaseModel[SAMBatch]):
                 "optimal_auc_threshold_dice_score": auc_dice_score,
                 "optimal_auc_threshold_IoU": auc_IoU,
             },
+        )
+
+    def calculate_bce_loss(self, prediction, target, enable_thresholding=False):
+        if (
+            not enable_thresholding
+            or self.config.lower_confidence_quantile is None
+            or self.config.upper_confidence_quantile is None
+        ):
+            return self.bce_loss.forward(prediction, target).mean()
+
+        loss_mask = self._get_gradient_mask(target)
+
+        loss = self.bce_loss.forward(prediction, target)
+
+        total_pixels = loss_mask.sum()
+
+        loss[loss_mask == 0] = 0
+
+        return loss.sum(dtype=torch.float32) / total_pixels
+
+    def _get_gradient_mask(self, gts_sized):
+        assert (
+            self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        )
+
+        lower_threshold = torch.quantile(
+            gts_sized.float(), self.config.lower_confidence_quantile
+        )
+        upper_threshold = torch.quantile(
+            gts_sized.float(), self.config.upper_confidence_quantile
+        )
+
+        return torch.logical_or(
+            gts_sized <= lower_threshold,
+            gts_sized > upper_threshold,
         )
 
     def segment_image(
@@ -315,15 +382,23 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
+    def compute_dice_loss(self, y_true, y_pred, smooth=1, enable_thresholding=False):
+        if (
+            enable_thresholding
+            and self.config.lower_confidence_quantile is not None
+            and self.config.upper_confidence_quantile is not None
+        ):
+            loss_mask = self._get_gradient_mask(y_true)
+            y_true = y_true * loss_mask
+            y_pred = y_pred * loss_mask
 
-def compute_dice_loss(y_true, y_pred, smooth=1):
-    alpha = 0.5
-    beta = 0.5
-    tp = torch.sum(y_true * y_pred, dim=(1, 2, 3))
-    fn = torch.sum(y_true * (1 - y_pred), dim=(1, 2, 3))
-    fp = torch.sum((1 - y_true) * y_pred, dim=(1, 2, 3))
-    tversky_class = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
-    return 1 - torch.mean(tversky_class)
+        alpha = 0.5
+        beta = 0.5
+        tp = torch.sum(y_true * y_pred, dim=(1, 2, 3))
+        fn = torch.sum(y_true * (1 - y_pred), dim=(1, 2, 3))
+        fp = torch.sum((1 - y_true) * y_pred, dim=(1, 2, 3))
+        tversky_class = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
+        return 1 - torch.mean(tversky_class)
 
 
 def get_input_dict(imgs, original_sz, img_sz):
