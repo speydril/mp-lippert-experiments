@@ -157,30 +157,41 @@ class AutoSamModel(BaseModel[SAMBatch]):
         binary_gts = gts.clone()
         binary_gts[binary_gts > 0.5] = 1
         binary_gts[binary_gts <= 0.5] = 0
-        roc = roc_auc_score(
-            binary_gts.detach().flatten().cpu(), masks.detach().flatten().cpu()
-        )
-        auc_threshold = get_optimal_threshold_auc(
-            binary_gts.flatten().cpu(), masks.detach().flatten().cpu()
-        )
-        auc_masks = masks.clone()
-        auc_masks[auc_masks > auc_threshold] = 1
-        auc_masks[auc_masks <= auc_threshold] = 0
-        auc_dice_score, auc_IoU = get_dice_ji(
-            auc_masks.squeeze().detach().cpu().numpy(),
-            binary_gts.squeeze().detach().cpu().numpy(),
-        )
 
-        iou_threshold = get_optimal_threshold_iou(
-            binary_gts.squeeze().cpu().numpy(), masks.detach().squeeze().cpu().numpy()
-        )
-        iou_masks = masks.clone()
-        iou_masks[iou_masks > iou_threshold] = 1
-        iou_masks[iou_masks <= iou_threshold] = 0
-        iou_dice_score, iou_IoU = get_dice_ji(
-            iou_masks.squeeze().detach().cpu().numpy(),
-            binary_gts.squeeze().detach().cpu().numpy(),
-        )
+        roc = 0
+        iou_threshold = 0
+        iou_dice_score = 0
+        iou_IoU = 0
+        auc_threshold = 0
+        auc_dice_score = 0
+        auc_IoU = 0
+
+        if not self.training:
+            roc = roc_auc_score(
+                binary_gts.detach().flatten().cpu(), masks.detach().flatten().cpu()
+            )
+            auc_threshold = get_optimal_threshold_auc(
+                binary_gts.flatten().cpu(), masks.detach().flatten().cpu()
+            )
+            auc_masks = masks.clone()
+            auc_masks[auc_masks > auc_threshold] = 1
+            auc_masks[auc_masks <= auc_threshold] = 0
+            auc_dice_score, auc_IoU = get_dice_ji(
+                auc_masks.squeeze().detach().cpu().numpy(),
+                binary_gts.squeeze().detach().cpu().numpy(),
+            )
+
+            iou_threshold = get_optimal_threshold_iou(
+                binary_gts.squeeze().cpu().numpy(),
+                masks.detach().squeeze().cpu().numpy(),
+            )
+            iou_masks = masks.clone()
+            iou_masks[iou_masks > iou_threshold] = 1
+            iou_masks[iou_masks <= iou_threshold] = 0
+            iou_dice_score, iou_IoU = get_dice_ji(
+                iou_masks.squeeze().detach().cpu().numpy(),
+                binary_gts.squeeze().detach().cpu().numpy(),
+            )
 
         masks[masks > 0.5] = 1
         masks[masks <= 0.5] = 0
