@@ -26,6 +26,27 @@ def parse_args():
         help="Number of samples to use for teacher",
     )
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--teacher_checkpoint",
+        type=str,
+        help="Path to checkpoint of teacher model",
+    )
+    parser.add_argument(
+        "--optimal_threshold",
+        type=float,
+        help="Optimal threshold for teacher model",
+    )
+    parser.add_argument(
+        "--skip_pseudo_label_gen",
+        action="store_true",
+        help="Skip pseudo label generation. If set, the pseudo labels must have been generated already.",
+    )
+    parser.add_argument(
+        "--gt_patches",
+        type=int,
+        help="Number of patches per original sample to use for ground truth fine-tuning",
+        default=4,
+    )
     args = parser.parse_args()
     return args
 
@@ -39,62 +60,20 @@ def exec(cmd: str):
         raise Exception(f"Error while executing '{cmd}':\n", result.stderr)
 
 
-def run_teacher_pretraining1(n_teacher_samples: str):
-    teacher_experiment_subdir_name = (
-        f"offlineST_teacher_step1_{n_teacher_samples}_samples_{dir_suffix}"
-    )
-    teacher_checkpoint_dir = (
-        Path(yaml_config.results_dir)
-        / "multi_ds_vessel_experiment"
-        / teacher_experiment_subdir_name
-    )
-    tags = f'["OfflineST","TeacherTraining","TeacherTraining1","VesselSeg","GT","PromptEncoder", "{n_teacher_samples}_samples"]'
-
-    print(f"Training teacher prompt encoder only...")
-    train_teacher_cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.003 --prompt_encoder_lr=0.003 --batch_size=8 --epochs=30 --weight_decay=1e-4 --early_stopping_patience=10 --visualize_n_segmentations=5 --gamma=0.9 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --drive_test_equals_val=false --use_wandb=true --wandb_experiment_name={debug_prefix}gt_vessels_offlineST_teacher1_{n_teacher_samples}_samples --amp=true --results_subdir_name={teacher_experiment_subdir_name} --wandb_tags={shlex.quote(tags)}"
-    if n_teacher_samples != "all":
-        train_teacher_cmd += f" --limit_train_samples={n_teacher_samples}"
-    exec(train_teacher_cmd)
-
-    teacher_dirs = os.listdir(teacher_checkpoint_dir)
-    assert (
-        len(teacher_dirs) == 1
-    ), f"Expected 1 dir in {teacher_checkpoint_dir}, got {len(teacher_dirs)}"
-    return teacher_checkpoint_dir / teacher_dirs[0] / "model.pt"
-
-
-def run_teacher_pretraining2(n_teacher_samples: str, teacher_checkpoint: str):
-    teacher_experiment_subdir_name = (
-        f"offlineST_teacher_step2_{n_teacher_samples}_samples_{dir_suffix}"
-    )
-    teacher_checkpoint_dir = (
-        Path(yaml_config.results_dir)
-        / "multi_ds_vessel_experiment"
-        / teacher_experiment_subdir_name
-    )
-    tags = f'["OfflineST","TeacherTraining","TeacherTraining2","VesselSeg","GT","FullModel", "{n_teacher_samples}_samples"]'
-
-    print(f"Training teacher full model...")
-    train_teacher_cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --prompt_encoder_lr=0.0001 --image_encoder_lr=0.00001 --mask_decoder_lr=0.0001 --batch_size=3 --epochs=50 --weight_decay=1e-4 --early_stopping_patience=10 --visualize_n_segmentations=5 --gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --drive_test_equals_val=false --use_wandb=true --wandb_experiment_name={debug_prefix}gt_vessels_offlineST_teacher_{n_teacher_samples}_samples --amp=true --results_subdir_name={teacher_experiment_subdir_name} --wandb_tags={shlex.quote(tags)} --from_checkpoint={teacher_checkpoint}"
-    if n_teacher_samples != "all":
-        train_teacher_cmd += f" --limit_train_samples={n_teacher_samples}"
-    exec(train_teacher_cmd)
-
-    teacher_dirs = os.listdir(teacher_checkpoint_dir)
-    assert (
-        len(teacher_dirs) == 1
-    ), f"Expected 1 dir in {teacher_checkpoint_dir}, got {len(teacher_dirs)}"
-    return teacher_checkpoint_dir / teacher_dirs[0] / "model.pt"
-
-
 def generate_pseudo_labels(
-    n_teacher_samples: str, teacher_checkpoint: str, limit: Optional[int] = None
+    n_teacher_samples: str,
+    teacher_checkpoint: str,
+    optimal_threshold: float,
+    limit: Optional[int] = None,
+    skip_pseudo_label_gen: bool = False,
 ):
     pseudo_labels_dir_name = f"teacher_{n_teacher_samples}_samples"
-    cmd = f"python src/wild-west/generate_labels.py --out_dir_name={pseudo_labels_dir_name} --teacher_checkpoint={teacher_checkpoint}"
-    if limit != None:
-        cmd += f" --limit={limit}"
-    exec(cmd)
+
+    if not skip_pseudo_label_gen:
+        cmd = f"python src/wild-west/generate_labels.py --out_dir_name={pseudo_labels_dir_name} --teacher_checkpoint={teacher_checkpoint} --optimal_threshold={optimal_threshold}"
+        if limit != None:
+            cmd += f" --limit={limit}"
+        exec(cmd)
     return (
         Path(yaml_config.ukbiobank_masks_dir) / pseudo_labels_dir_name,
         pseudo_labels_dir_name,
@@ -129,10 +108,16 @@ def run_student_st(
 
 
 def run_full_fine_tuning(
-    prefix: Literal["NoST", "OfflineST"], n_teacher_samples: str, checkpoint_path: str
+    prefix: Literal["NoST", "OfflineST"],
+    n_teacher_samples: str,
+    checkpoint_path: str,
+    patches: Optional[int] = None,
 ):
-    subdir_name = f"{prefix}_student_fft_{n_teacher_samples}_samples_{dir_suffix}"
-    cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=3 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=4 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00005 --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
+    patching_name = f"_patched{patches}" if patches != None else ""
+    subdir_name = (
+        f"{prefix}{patching_name}_student_fft_{n_teacher_samples}_samples_{dir_suffix}"
+    )
+    cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=3 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=5 --visualize_n_segmentations=5 --gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00001 --prompt_encoder_lr=0.0001 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt{patching_name}_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
     if n_teacher_samples != "all":
         cmd += f" --limit_train_samples={n_teacher_samples}"
 
@@ -146,7 +131,12 @@ def run_full_fine_tuning(
     ]
     if prefix == "NoST":
         tags.append("Baseline")
+    if patches != None:
+        tags.append(f"Patched{patches}")
+        tags.append("Patched")
+        cmd += f" --patch_samples={patches}"
     cmd += f" --wandb_tags={shlex.quote(json.dumps(tags))}"
+
     exec(cmd)
     checkpoint_dir = (
         Path(yaml_config.results_dir) / "multi_ds_vessel_experiment" / subdir_name
@@ -162,15 +152,16 @@ if __name__ == "__main__":
     debug_prefix = "DEBUG_" if debug else ""
     n_teacher_samples = str(args.n_teacher_samples) if args.n_teacher_samples else "all"
 
-    teacher_checkpoint = run_teacher_pretraining1(n_teacher_samples)
-    teacher_checkpoint = run_teacher_pretraining2(
-        n_teacher_samples, str(teacher_checkpoint)
-    )
+    teacher_checkpoint = args.teacher_checkpoint
     print(
         f"Teacher trained and saved in {teacher_checkpoint}. Generating pseudo labels..."
     )
     pseudo_labels_dir, pseudo_labels_dir_name = generate_pseudo_labels(
-        n_teacher_samples, str(teacher_checkpoint), limit=1000 if debug else None
+        n_teacher_samples,
+        str(teacher_checkpoint),
+        optimal_threshold=args.optimal_threshold,
+        limit=1000 if debug else None,
+        skip_pseudo_label_gen=args.skip_pseudo_label_gen,
     )
     print(f"Generated pseudo labels in {pseudo_labels_dir}")
 
@@ -182,7 +173,7 @@ if __name__ == "__main__":
         limit=1000 if debug else None,
     )
 
-    print("Training FFT baseline")
-    run_full_fine_tuning("NoST", n_teacher_samples, str(teacher_checkpoint))
     print("Training FFT offlineST")
-    run_full_fine_tuning("OfflineST", n_teacher_samples, str(student_checkpoint))
+    run_full_fine_tuning(
+        "OfflineST", n_teacher_samples, str(student_checkpoint), patches=args.gt_patches
+    )
