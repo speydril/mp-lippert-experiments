@@ -25,7 +25,12 @@ def parse_args():
     parser.add_argument(
         "--limit", type=int, help="Number of samples to generate", required=False
     )
-
+    parser.add_argument(
+        "--optimal_threshold",
+        type=float,
+        help="Threshold for for prediction quantization",
+        default=0.5,
+    )
     args = parser.parse_args()
     return args
 
@@ -83,11 +88,18 @@ if __name__ == "__main__":
         relevant_filepaths = relevant_filepaths[: args.limit]
     masks_out_dir = Path(f"{output_path}/generated_masks")
     masks_out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(
+        "Generating masks for ",
+        len(relevant_filepaths),
+        " images with threshold ",
+        args.optimal_threshold,
+    )
     for p in tqdm(relevant_filepaths, miniters=500):
         mask_out_path = masks_out_dir / os.path.basename(p)
         image, mask = model.segment_image_from_file(p)
-        mask[mask > 255 / 2] = 255
-        mask[mask <= 255 / 2] = 0
+        mask[mask > 255 * args.optimal_threshold] = 255
+        mask[mask <= 255 * args.optimal_threshold] = 0
         mask_img = mask * np.array([1, 1, 1])
         cv2.imwrite(str(mask_out_path), mask_img)
 
