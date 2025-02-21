@@ -104,42 +104,40 @@ class UkBioBankExperiment(BaseExperiment):
         return UkBiobankExperimentArgs
 
     def create_optimizer(self) -> Optimizer:
-        def get_trainable_params():
-            return [
+        params = [
+            {
+                "params": cast(AutoSamModel, self.model).sam.mask_decoder.parameters(),
+                "lr": (
+                    self.config.mask_decoder_lr
+                    if self.config.mask_decoder_lr is not None
+                    else self.config.learning_rate
+                ),
+            },
+            {
+                "params": cast(
+                    AutoSamModel, self.model
+                ).sam.prompt_encoder.parameters(),
+                "lr": (
+                    self.config.prompt_encoder_lr
+                    if self.config.prompt_encoder_lr is not None
+                    else self.config.learning_rate
+                ),
+            },
+        ]
+        if self.config.image_encoder_lr is not None:
+            params.append(
                 {
                     "params": cast(
                         AutoSamModel, self.model
                     ).sam.image_encoder.parameters(),
-                    "lr": (
-                        self.config.image_encoder_lr
-                        if self.config.image_encoder_lr is not None
-                        else self.config.learning_rate
-                    ),
+                    "lr": (self.config.image_encoder_lr),
                 },
-                {
-                    "params": cast(
-                        AutoSamModel, self.model
-                    ).sam.mask_decoder.parameters(),
-                    "lr": (
-                        self.config.mask_decoder_lr
-                        if self.config.mask_decoder_lr is not None
-                        else self.config.learning_rate
-                    ),
-                },
-                {
-                    "params": cast(
-                        AutoSamModel, self.model
-                    ).sam.prompt_encoder.parameters(),
-                    "lr": (
-                        self.config.prompt_encoder_lr
-                        if self.config.prompt_encoder_lr is not None
-                        else self.config.learning_rate
-                    ),
-                },
-            ]
+            )
+        else:
+            print("Image encoder lr is none, therefore parameters are not trainable")
 
         return torch.optim.Adam(
-            get_trainable_params(),
+            params,
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
             eps=self.config.eps,
