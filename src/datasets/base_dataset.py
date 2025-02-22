@@ -66,7 +66,7 @@ class BaseDataset(Dataset):
 
     @abstractmethod
     def get_split(self, split: Literal["train", "val", "test"]) -> Self:
-        pass
+        raise NotImplementedError()
 
 
 class JoinedDataset(BaseDataset):
