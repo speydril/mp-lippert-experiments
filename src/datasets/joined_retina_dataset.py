@@ -1,14 +1,18 @@
 from typing import Callable, Literal, Optional
 from typing_extensions import Self
 from pydantic import BaseModel, Field
-from src.datasets.aria_dataset import ARIADataset, ARIADatasetArgs
+from src.datasets.aria_dataset import ARIADataset, ARIADatasetArgs, ARIASample
 from src.models.auto_sam_model import SAMSampleFileReference
 from src.args.yaml_config import YamlConfigModel
 from src.datasets.base_dataset import BaseDataset, JoinedDataset
-from src.datasets.chasedb1_dataset import ChaseDb1Dataset, ChaseDb1DatasetArgs
-from src.datasets.drive_dataset import DriveDataset, DriveDatasetArgs
-from src.datasets.hrf_dataset import HrfDataset, HrfDatasetArgs
-from src.datasets.stare_dataset import STAREDataset, STAREDatasetArgs
+from src.datasets.chasedb1_dataset import (
+    ChaseDb1Dataset,
+    ChaseDb1DatasetArgs,
+    ChaseDb1Sample,
+)
+from src.datasets.drive_dataset import DriveDataset, DriveDatasetArgs, DriveSample
+from src.datasets.hrf_dataset import HrfDataset, HrfDatasetArgs, HrfSample
+from src.datasets.stare_dataset import STAREDataset, STAREDatasetArgs, STARESample
 
 
 class JoinedRetinaDatasetArgs(
@@ -21,6 +25,9 @@ class JoinedRetinaDatasetArgs(
     include_aria: bool = Field(
         default=True, description="Include ARIA dataset in the joined dataset"
     )
+
+
+JoinedRetinaSample = DriveSample | ChaseDb1Sample | HrfSample | STARESample | ARIASample
 
 
 class JoinedRetinaDataset(JoinedDataset):
