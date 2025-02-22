@@ -5,6 +5,8 @@ import numpy as np
 import torch
 
 
+from src.datasets.ukbiobank_dataset import BiobankBatch
+from datasets.online_st_dataset import OnlineSTMixedBatch
 from src.models.auto_sam_model import norm_batch
 from src.experiments.self_learning_experiment import SelfLearningExperiment
 from src.datasets.base_dataset import Batch
@@ -111,8 +113,30 @@ class SelfTrainer(Trainer):
         return super()._augment_batch(batch)
 
     def _preprocess_labels(self, batch: Batch):
+        if isinstance(batch, BiobankBatch) and not isinstance(
+            batch, OnlineSTMixedBatch
+        ):
+            # Fill in the gt flag
+            batch = OnlineSTMixedBatch(
+                **batch.__dict__, is_gt=torch.zeros(batch.input.shape[0])
+            )
+        assert isinstance(batch, OnlineSTMixedBatch) and batch.target is not None
         self.experiment.teacher_model.eval()
-        return norm_batch(self.experiment.teacher_model.forward(batch).logits)
+        indices = torch.where(batch.is_gt == 0)
+        with torch.no_grad():
+            batch_to_label = Batch(batch.input[indices], None)
+            targets = batch.target.unsqueeze(1)
+            teacher_logits = self.experiment.teacher_model.forward(
+                batch_to_label
+            ).logits
+            teacher_logits = torch.nn.functional.interpolate(
+                teacher_logits,
+                size=targets.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+            targets[indices] = norm_batch(teacher_logits)
+            return targets
 
     def _after_batch_complete(self, iter: int):
         if self.experiment.config.constant_ema_decay:

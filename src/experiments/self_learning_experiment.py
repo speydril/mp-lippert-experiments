@@ -1,11 +1,14 @@
 from typing import Literal, Any, Optional, Type
 import torch
 from torch.optim.optimizer import Optimizer
+from datasets.online_st_dataset import (
+    OnlineSTDataset,
+    OnlineSTDatasetArgs,
+)
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
-    JoinedRetinaDatasetArgs,
 )
-from src.datasets.ukbiobank_dataset import UkBiobankDataset, UkBiobankDatasetArgs
+from src.datasets.ukbiobank_dataset import UkBiobankDataset
 from src.models.auto_sam_model import AutoSamModel, AutoSamModelArgs
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
 from src.models.base_model import BaseModel
@@ -22,8 +25,7 @@ class SelfLearningExperimentArgs(
     AdamArgs,
     StepLRArgs,
     AutoSamModelArgs,
-    UkBiobankDatasetArgs,
-    JoinedRetinaDatasetArgs,
+    OnlineSTDatasetArgs,
 ):
     visualize_n_segmentations: int = Field(
         default=3, description="Number of images of test set to segment and visualize"
@@ -94,11 +96,21 @@ class SelfLearningExperiment(BaseExperiment):
         self, split: Literal["train", "val", "test"] = "train"
     ) -> BaseDataset:
         if split == "train":
-            return UkBiobankDataset(
+            train_uk_biobank = UkBiobankDataset(
                 config=self.config,
                 yaml_config=self.yaml_config,
                 with_masks=False,
             ).get_split(split)
+            train_gt = JoinedRetinaDataset.from_config(
+                self.config, self.yaml_config, self.config.seed
+            ).get_split(split, limit_samples=self.config.limit_train_samples)
+            return OnlineSTDataset(
+                self.yaml_config,
+                self.config,
+                self.config.seed,
+                train_gt,
+                train_uk_biobank,
+            )
         else:
             return JoinedRetinaDataset.from_config(
                 self.config, self.yaml_config, self.config.seed
