@@ -1,7 +1,6 @@
 import os
 from typing import Literal, Optional
 from src.args.yaml_config import YamlConfig
-from src.args.yaml_config import YamlConfig
 from pathlib import Path
 import argparse
 import subprocess
@@ -47,6 +46,11 @@ def parse_args():
         help="Number of patches per original sample to use for ground truth fine-tuning",
         default=4,
     )
+    parser.add_argument(
+        "--freeze_image_encoder_in_st",
+        action="store_true",
+        help="Freeze image encoder in self training",
+    )
     args = parser.parse_args()
     return args
 
@@ -85,15 +89,33 @@ def run_student_st(
     pseudo_labels_dir_name: str,
     teacher_checkpoint: str,
     limit: Optional[int] = None,
+    freeze_image_encoder: bool = False,
 ):
     student_experiment_subdir_name = (
         f"offlineST_student_{n_teacher_samples}_samples_{dir_suffix}"
     )
-    tags = f'["OfflineST","StudentTraining","VesselSeg","PseudoLabels", "FullModel", "{n_teacher_samples}_samples"]'
-    cmd = f"python run.py --experiment_id=uk_biobank_experiment --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=3 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={teacher_checkpoint} --image_encoder_lr=0.00005 --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}ukbiobank_offlineST_teacher{n_teacher_samples}samples --augment_train=false --pseudo_labels_dir={pseudo_labels_dir_name} --results_subdir_name={student_experiment_subdir_name}"
+    wandb_exp_name = (
+        f"{debug_prefix}ukbiobank_offlineST_teacher{n_teacher_samples}samples"
+    )
+    tags = [
+        "OfflineST",
+        "StudentTraining",
+        "VesselSeg",
+        "PseudoLabels",
+        "FullModel",
+        f"{n_teacher_samples}_samples",
+    ]
+    if freeze_image_encoder:
+        student_experiment_subdir_name += "_frozenImgEnc"
+        wandb_exp_name += "_frozenImgEnc"
+        tags.append("FrozenImageEncoder")
+    cmd = f"python run.py --experiment_id=uk_biobank_experiment --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=3 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={teacher_checkpoint} --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={wandb_exp_name} --augment_train=false --pseudo_labels_dir={pseudo_labels_dir_name} --results_subdir_name={student_experiment_subdir_name}"
     if limit != None:
         cmd += f" --limit={limit}"
-    cmd += f" --wandb_tags={shlex.quote(tags)}"
+
+    if not freeze_image_encoder:
+        cmd += " --image_encoder_lr=0.00005"
+    cmd += f" --wandb_tags={shlex.quote(json.dumps(tags))}"
     exec(cmd)
     student_checkpoint_dir = (
         Path(yaml_config.results_dir)
@@ -171,6 +193,7 @@ if __name__ == "__main__":
         pseudo_labels_dir_name,
         str(teacher_checkpoint),
         limit=1000 if debug else None,
+        freeze_image_encoder=args.freeze_image_encoder_in_st,
     )
 
     print("Training FFT offlineST")
