@@ -6,7 +6,7 @@ import torch
 
 
 from src.datasets.ukbiobank_dataset import BiobankBatch
-from datasets.online_st_dataset import OnlineSTMixedBatch
+from src.datasets.online_st_dataset import OnlineSTMixedBatch
 from src.models.auto_sam_model import norm_batch
 from src.experiments.self_learning_experiment import SelfLearningExperiment
 from src.datasets.base_dataset import Batch
