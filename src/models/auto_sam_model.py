@@ -42,6 +42,14 @@ class AutoSamModelArgs(PDBaseModel):
         default=None,
         description="Upper quantile of confidence of targets, should be between 0.5 and 1.0 with 0.5 being the least restrictive",
     )
+    lower_confidence_threshold: Optional[float] = Field(
+        default=None,
+        description="Lower threshold of confidence of targets, should be between 0.0 and 1.0",
+    )
+    upper_confidence_threshold: Optional[float] = Field(
+        default=None,
+        description="Upper threshold of confidence of targets, should be between 0.0 and 1.0",
+    )
 
 
 sam_model_registry = {
@@ -102,9 +110,17 @@ class AutoSamModel(BaseModel[SAMBatch]):
         batch: SAMBatch,
     ) -> Loss:
         assert batch.target is not None
-
+        assert (
+            self.config.upper_confidence_quantile is None
+            or self.config.upper_confidence_threshold is None
+        ), "Cannot have both upper confidence quantile and upper confidence threshold"
+        assert (
+            self.config.lower_confidence_quantile is None
+            or self.config.lower_confidence_threshold is None
+        ), "Cannot have both lower confidence quantile and lower confidence threshold"
         normalized_logits = norm_batch(outputs.logits)
-        size = outputs.logits.shape[2:]
+        size = batch.target.shape[-2:]
+
         gts_sized = F.interpolate(
             (
                 batch.target.unsqueeze(dim=1)
@@ -114,15 +130,11 @@ class AutoSamModel(BaseModel[SAMBatch]):
             size,
             mode="nearest",
         )
+        bce_loss = self.calculate_bce_loss(outputs.logits, gts_sized)
 
-        bce_loss = self.calculate_bce_loss(
-            outputs.logits, gts_sized, batch.is_gt, self.training
-        )
         dice_loss = self.compute_dice_loss_w_thresholding(
             gts_sized,
             normalized_logits,
-            batch.is_gt,
-            enable_thresholding=self.training,
         )
         loss_value = bce_loss + dice_loss
 
@@ -211,21 +223,19 @@ class AutoSamModel(BaseModel[SAMBatch]):
             },
         )
 
-    def calculate_bce_loss(
-        self,
-        prediction,
-        target,
-        is_gt: Optional[torch.Tensor] = None,
-        enable_thresholding=False,
-    ):
-        if (
-            not enable_thresholding
-            or self.config.lower_confidence_quantile is None
-            or self.config.upper_confidence_quantile is None
-        ):
+    def _enable_confidence_thresholding(self):
+        return self.training and (
+            (
+                self.config.lower_confidence_threshold is not None
+                and self.config.upper_confidence_threshold is not None
+            )
+        )
+
+    def calculate_bce_loss(self, prediction, target):
+        if not self._enable_confidence_thresholding():
             return self.bce_loss.forward(prediction, target).mean()
 
-        loss_mask = self._get_gradient_mask(target, is_gt)
+        loss_mask = self._get_gradient_mask(target)
 
         loss = self.bce_loss.forward(prediction, target)
 
@@ -235,31 +245,12 @@ class AutoSamModel(BaseModel[SAMBatch]):
 
         return loss.sum(dtype=torch.float32) / total_pixels
 
-    def _get_gradient_mask(
-        self, gts_sized: torch.Tensor, is_gt: Optional[torch.Tensor] = None
-    ):
-        assert (
-            self.config.lower_confidence_quantile is not None
-            and self.config.upper_confidence_quantile is not None
-        )
+    def _get_gradient_mask(self, gts_sized):
         # gts_sized shape: (batch_size, 1, H, W), is_gt shape: (batch_size, )
-
-        pseudos = gts_sized[~is_gt] if is_gt is not None else gts_sized
-        lower_threshold = torch.quantile(
-            pseudos.float(), self.config.lower_confidence_quantile
+        return torch.logical_or(
+            gts_sized <= self.config.lower_confidence_threshold,
+            gts_sized > self.config.upper_confidence_threshold,
         )
-        upper_threshold = torch.quantile(
-            pseudos.float(), self.config.upper_confidence_quantile
-        )
-
-        grad_mask = torch.logical_or(
-            gts_sized <= lower_threshold,
-            gts_sized > upper_threshold,
-        )
-        if is_gt is not None:
-            # Ensure that ground truth pixels are not masked
-            grad_mask[is_gt] = True
-        return grad_mask
 
     def segment_image(
         self,
@@ -403,16 +394,10 @@ class AutoSamModel(BaseModel[SAMBatch]):
         self,
         y_true,
         y_pred,
-        is_gt: Optional[torch.Tensor] = None,
         smooth=1,
-        enable_thresholding=False,
     ):
-        if (
-            enable_thresholding
-            and self.config.lower_confidence_quantile is not None
-            and self.config.upper_confidence_quantile is not None
-        ):
-            loss_mask = self._get_gradient_mask(y_true, is_gt)
+        if self._enable_confidence_thresholding():
+            loss_mask = self._get_gradient_mask(y_true)
             y_true = y_true * loss_mask
             y_pred = y_pred * loss_mask
 

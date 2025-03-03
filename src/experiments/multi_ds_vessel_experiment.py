@@ -44,10 +44,6 @@ class MultiDSVesselExperimentArgs(
         default=None,
         description="Learning rate for prompt encoder, if None, general learning rate is used",
     )
-    limit_train_samples: Optional[int] = Field(
-        default=None,
-        description="Limit number of training samples, i.e. image mask pairs to include (if patch_samples is True, this is the number of patches)",
-    )
     patch_samples: Optional[Literal[4, 16]] = Field(
         default=None, description="Patch samples into 4 or 16 parts"
     )
