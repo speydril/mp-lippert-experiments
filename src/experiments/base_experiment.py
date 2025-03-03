@@ -52,6 +52,10 @@ class BaseExperimentArgs(PDBaseModel):
     gradient_clipping: Optional[float] = None
     whiteNoiseSD: float = 0.0
     constantOffsetSD: float = 0.0
+    limit_train_samples: Optional[int] = Field(
+        default=None,
+        description="Limit number of training samples, i.e. image mask pairs to include (if patch_samples is True, this is the number of patches)",
+    )
     seed: int = 42
     early_stopping_patience: Optional[int] = Field(
         default=None,
