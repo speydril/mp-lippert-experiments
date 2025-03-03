@@ -121,6 +121,7 @@ class JoinedPatchedRetinaDataset(JoinedDataset):
             self._get_total_n_samples() % patches == 0
         ), "Total number of samples must be divisible by patches"
         origin_idxs = list(range(floor(self._get_total_n_samples() / patches)))
+        random.seed(seed)
         random.shuffle(origin_idxs)
         self.index_map = [
             origin_idxs[floor(i / patches)] * patches + i % patches
