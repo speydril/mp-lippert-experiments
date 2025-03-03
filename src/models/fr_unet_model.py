@@ -289,12 +289,7 @@ class FRUnet(BaseModel[SAMBatch]):
     def forward(self, batch: SAMBatch) -> ModelOutput:
         return ModelOutput(logits=self.unet(batch.input))
 
-    def compute_loss(
-        self,
-        outputs: ModelOutput,
-        batch: SAMBatch,
-        confidence_thresholding: bool = False,
-    ) -> Loss:
+    def compute_loss(self, outputs: ModelOutput, batch: SAMBatch) -> Loss:
         assert batch.target is not None
 
         normalized_logits = norm_batch(outputs.logits)

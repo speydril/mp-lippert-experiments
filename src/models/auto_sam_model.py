@@ -34,14 +34,6 @@ class AutoSamModelArgs(PDBaseModel):
     hard_net_arch: int = 68
     depth_wise: bool = False
     Idim: int = 512
-    lower_confidence_quantile: Optional[float] = Field(
-        default=None,
-        description="Lower quantile of confidence of targets, should be between 0.0 and 0.5 with 0.5 being the least restrictive",
-    )
-    upper_confidence_quantile: Optional[float] = Field(
-        default=None,
-        description="Upper quantile of confidence of targets, should be between 0.5 and 1.0 with 0.5 being the least restrictive",
-    )
     lower_confidence_threshold: Optional[float] = Field(
         default=None,
         description="Lower threshold of confidence of targets, should be between 0.0 and 1.0",
@@ -65,6 +57,9 @@ class SAMBatch(Batch):
     original_size: torch.Tensor
     image_size: torch.Tensor
     metadata: Optional[dict] = None
+    is_gt: Optional[torch.Tensor] = (
+        None  # tensor of size (batch_size, ), specifying for each sample wether it is ground truth (and therefore binary) or a pseudo label and therefore continuous
+    )
 
 
 @dataclass
@@ -105,33 +100,25 @@ class AutoSamModel(BaseModel[SAMBatch]):
         self,
         outputs: ModelOutput,
         batch: SAMBatch,
-        confidence_thresholding: bool = False,
     ) -> Loss:
         assert batch.target is not None
-        assert (
-            self.config.upper_confidence_quantile is None
-            or self.config.upper_confidence_threshold is None
-        ), "Cannot have both upper confidence quantile and upper confidence threshold"
-        assert (
-            self.config.lower_confidence_quantile is None
-            or self.config.lower_confidence_threshold is None
-        ), "Cannot have both lower confidence quantile and lower confidence threshold"
+        normalized_logits = norm_batch(outputs.logits)
+        size = outputs.logits.shape[2:]
 
-        size = batch.target.shape[-2:]
-        resized_logits = F.interpolate(
-            outputs.logits, size, mode="bilinear", align_corners=True
+        gts_sized = F.interpolate(
+            (
+                batch.target.unsqueeze(dim=1)
+                if batch.target.dim() != outputs.logits.dim()
+                else batch.target
+            ),
+            size,
+            mode="nearest",
         )
-        normalized_logits = norm_batch(resized_logits)
+        bce_loss = self.calculate_bce_loss(outputs.logits, gts_sized)
 
-        bce_loss = self.calculate_bce_loss(
-            normalized_logits,
-            batch.target.unsqueeze(dim=1) if batch.target.dim() != 4 else batch.target,
-            confidence_thresholding,
-        )
         dice_loss = self.compute_dice_loss_w_thresholding(
-            batch.target.unsqueeze(dim=1) if batch.target.dim() != 4 else batch.target,
+            gts_sized,
             normalized_logits,
-            enable_thresholding=confidence_thresholding,
         )
         loss_value = bce_loss + dice_loss
 
@@ -220,20 +207,16 @@ class AutoSamModel(BaseModel[SAMBatch]):
             },
         )
 
-    def _enable_confidence_thresholding(self, confidence_thresholding):
-        return confidence_thresholding and (
+    def _enable_confidence_thresholding(self):
+        return self.training and (
             (
-                self.config.lower_confidence_quantile is not None
-                and self.config.upper_confidence_quantile is not None
-            )
-            or (
                 self.config.lower_confidence_threshold is not None
                 and self.config.upper_confidence_threshold is not None
             )
         )
 
-    def calculate_bce_loss(self, prediction, target, enable_thresholding=False):
-        if not self._enable_confidence_thresholding(enable_thresholding):
+    def calculate_bce_loss(self, prediction, target):
+        if not self._enable_confidence_thresholding():
             return self.bce_loss.forward(prediction, target).mean()
 
         loss_mask = self._get_gradient_mask(target)
@@ -247,29 +230,10 @@ class AutoSamModel(BaseModel[SAMBatch]):
         return loss.sum(dtype=torch.float32) / total_pixels
 
     def _get_gradient_mask(self, gts_sized):
-        # If both thresholds are set, use them. Otherwise, use the quantiles
-        assert (
-            self.config.lower_confidence_quantile is not None
-            and self.config.upper_confidence_quantile is not None
-        ) or (
-            self.config.lower_confidence_threshold is not None
-            and self.config.upper_confidence_threshold is not None
-        )
-
-        lower_threshold = (
-            torch.quantile(gts_sized.float(), self.config.lower_confidence_quantile)  # type: ignore
-            if self.config.lower_confidence_threshold is None
-            else self.config.lower_confidence_threshold
-        )
-        upper_threshold = (
-            torch.quantile(gts_sized.float(), self.config.upper_confidence_quantile)  # type: ignore
-            if self.config.upper_confidence_threshold is None
-            else self.config.upper_confidence_threshold
-        )
-
+        # gts_sized shape: (batch_size, 1, H, W), is_gt shape: (batch_size, )
         return torch.logical_or(
-            gts_sized <= lower_threshold,
-            gts_sized > upper_threshold,
+            gts_sized <= self.config.lower_confidence_threshold,
+            gts_sized > self.config.upper_confidence_threshold,
         )
 
     def segment_image(
@@ -411,9 +375,12 @@ class AutoSamModel(BaseModel[SAMBatch]):
         cv2.imwrite(output_path, cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
     def compute_dice_loss_w_thresholding(
-        self, y_true, y_pred, smooth=1, enable_thresholding=False
+        self,
+        y_true,
+        y_pred,
+        smooth=1,
     ):
-        if self._enable_confidence_thresholding(enable_thresholding):
+        if self._enable_confidence_thresholding():
             loss_mask = self._get_gradient_mask(y_true)
             y_true = y_true * loss_mask
             y_pred = y_pred * loss_mask

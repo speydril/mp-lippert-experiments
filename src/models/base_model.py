@@ -28,7 +28,5 @@ class BaseModel(Module, ABC, Generic[B]):
         pass
 
     @abstractmethod
-    def compute_loss(
-        self, outputs: ModelOutput, batch: B, confidence_thresholding: bool = False
-    ) -> Loss:
+    def compute_loss(self, outputs: ModelOutput, batch: B) -> Loss:
         pass

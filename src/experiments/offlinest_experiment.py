@@ -1,30 +1,24 @@
 from typing import Literal, Any, Optional
-from click import prompt
 import torch
 from torch.optim.optimizer import Optimizer
+from src.datasets.offline_st_dataset import OfflineSTTrainDataset, OfflineStDatasetArgs
 from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
 )
-from src.datasets.ukbiobank_dataset import UkBiobankDataset, UkBiobankDatasetArgs
 from src.models.auto_sam_model import AutoSamModel, AutoSamModelArgs
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
 from src.models.base_model import BaseModel
 from src.args.yaml_config import YamlConfigModel
-from src.datasets.base_dataset import BaseDataset
-from src.optimizers.adam import create_adam_optimizer, AdamArgs
+from src.optimizers.adam import AdamArgs
 from src.schedulers.step_lr import StepLRArgs, create_steplr_scheduler
 from typing import cast
 import os
 from pydantic import Field
 
 
-class UkBiobankExperimentArgs(
-    BaseExperimentArgs,
-    AdamArgs,
-    StepLRArgs,
-    AutoSamModelArgs,
-    JoinedRetinaDatasetArgs,
+class OfflineSTExperimentArgs(
+    BaseExperimentArgs, AdamArgs, StepLRArgs, AutoSamModelArgs, OfflineStDatasetArgs
 ):
     prompt_encoder_checkpoint: Optional[str] = Field(
         default=None, description="Path to prompt encoder checkpoint"
@@ -41,49 +35,28 @@ class UkBiobankExperimentArgs(
     prompt_encoder_lr: Optional[float] = Field(
         default=None, description="Learning rate for prompt encoder"
     )
-    pseudo_labels_dir: str = Field(
-        description="Name of the the directory containing the pseudo labels with pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png"
-    )
-    augment_train: bool = True
-    filter_scores_filepath: str = (
-        "/dhc/groups/mp2024cl2/ukbiobank_filters/filter_predictions.csv"
-    )
-    limit: Optional[int] = None
 
 
-class UkBioBankExperiment(BaseExperiment):
+class OfflineSTExperiment(BaseExperiment):
     def __init__(self, config: dict[str, Any], yaml_config: YamlConfigModel):
-        self.config = UkBiobankExperimentArgs(**config)
-        biobank_config = UkBiobankDatasetArgs(
-            pseudo_labels_dir=self.config.pseudo_labels_dir,
-            train_percentage=1.0,
-            val_percentage=0.0,
-            test_percentage=0.0,
-            filter_scores_filepath=self.config.filter_scores_filepath,
-            limit=self.config.limit,
-        )
-        self.biobank = UkBiobankDataset(
-            config=biobank_config,
-            yaml_config=yaml_config,
-            with_masks=True,
-            augment_inputs=self.config.augment_train,
-        )
+        self.config = OfflineSTExperimentArgs(**config)
+
+        gt_config = JoinedRetinaDatasetArgs(drive_test_equals_val=False)
         self.joined_retina = JoinedRetinaDataset.from_config(
+            gt_config, yaml_config, self.config.seed
+        )
+        self.train_ds = OfflineSTTrainDataset(
             self.config, yaml_config, self.config.seed
         )
+
         super().__init__(config, yaml_config)
-        assert (
-            self.config.drive_test_equals_val is False
-        ), "drive_test_equals_val is True but should be False, otherwise we leak data"
 
     def get_name(self) -> str:
-        return "uk_biobank_experiment"
+        return "offline_st_experiment"
 
-    def _create_dataset(
-        self, split: Literal["train", "val", "test"] = "train"
-    ) -> JoinedRetinaDataset | UkBiobankDataset:
+    def _create_dataset(self, split: Literal["train", "val", "test"] = "train"):
         if split == "train":
-            return self.biobank
+            return self.train_ds
         else:
             return self.joined_retina.get_split(split)
 
@@ -101,7 +74,7 @@ class UkBioBankExperiment(BaseExperiment):
 
     @classmethod
     def get_args_model(cls):
-        return UkBiobankExperimentArgs
+        return OfflineSTExperimentArgs
 
     def create_optimizer(self) -> Optimizer:
         params = [

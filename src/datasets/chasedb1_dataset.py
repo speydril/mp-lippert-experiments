@@ -19,6 +19,7 @@ from PIL import Image
 class ChaseDb1Sample(Sample):
     original_size: torch.Tensor
     image_size: torch.Tensor
+    idx: int
 
 
 @dataclass
@@ -80,6 +81,7 @@ class ChaseDb1Dataset(BaseDataset):
             target=self.sam_trans.preprocess(mask),
             original_size=torch.Tensor(original_size),
             image_size=torch.Tensor(image_size),
+            idx=index,
         )
 
     def __len__(self):

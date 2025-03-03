@@ -26,6 +26,7 @@ from src.util.datatset_helper import suggest_split
 class ARIASample(Sample):
     original_size: torch.Tensor
     image_size: torch.Tensor
+    idx: int
 
 
 class ARIADatasetArgs(BaseModel):
@@ -81,6 +82,7 @@ class ARIADataset(BaseDataset):
             target=self.sam_trans.preprocess(mask),
             original_size=torch.Tensor(original_size),
             image_size=torch.Tensor(image_size),
+            idx=index,
         )
 
     def __len__(self):

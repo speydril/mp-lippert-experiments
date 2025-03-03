@@ -1,4 +1,5 @@
 from typing import Type
+from src.experiments.offlinest_experiment import OfflineSTExperiment
 from src.experiments.vessel_hq_experiment import VesselHQExperiment
 from src.experiments.vessel_frunet_experiment import VesselFRUnetExperiment
 from src.experiments.self_learning_experiment_debug import SelfLearningExperimentDebug
@@ -24,6 +25,7 @@ experiments: dict[str, Type[BaseExperiment]] = {
     "aria": ARIAExperiment,
     "self_learning_experiment": SelfLearningExperiment,
     "self_learning_experiment_debug": SelfLearningExperimentDebug,
-    "vessel_hq" : VesselHQExperiment,
+    "vessel_hq": VesselHQExperiment,
     "vessel_fr_unet": VesselFRUnetExperiment,
+    "offline_st": OfflineSTExperiment,
 }
