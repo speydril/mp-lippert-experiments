@@ -1,8 +1,9 @@
 from typing import Callable, Literal, Optional
+import torch
 from typing_extensions import Self
 from pydantic import BaseModel, Field
 from src.datasets.aria_dataset import ARIADataset, ARIADatasetArgs, ARIASample
-from src.models.auto_sam_model import SAMSampleFileReference
+from src.models.auto_sam_model import SAMBatch, SAMSampleFileReference
 from src.args.yaml_config import YamlConfigModel
 from src.datasets.base_dataset import BaseDataset, JoinedDataset
 from src.datasets.chasedb1_dataset import (
@@ -57,7 +58,7 @@ class JoinedRetinaDataset(JoinedDataset):
         if config.include_aria:
             aria = ARIADataset(config=config, yaml_config=yaml_config)
             datasets.append(aria)
-        return cls(datasets, drive.get_collate_fn(), seed=seed)
+        return cls(datasets, JoinedRetinaDataset.get_collate_fn(), seed=seed)
 
     def __len__(self) -> int:
         if self.limit_samples is not None:
@@ -75,3 +76,31 @@ class JoinedRetinaDataset(JoinedDataset):
             limit_samples=limit_samples,
             seed=self.seed,
         )
+
+    @classmethod
+    def get_collate_fn(cls):
+        def collate(samples: list[JoinedRetinaSample]):
+            inputs = torch.stack([s.input for s in samples])
+            targets = torch.stack([s.target for s in samples])
+            original_size = torch.stack([s.original_size for s in samples])
+            image_size = torch.stack([s.image_size for s in samples])
+
+            meta = {
+                "sample_metadata": [
+                    {
+                        "origin_dataset": s.__class__.__name__,
+                        "origin_sample_idx": f"{s.__class__.__name__}_{s.idx}",
+                    }
+                    for s in samples
+                ]
+            }
+
+            return SAMBatch(
+                inputs,
+                targets,
+                original_size=original_size,
+                image_size=image_size,
+                metadata=meta,
+            )
+
+        return collate

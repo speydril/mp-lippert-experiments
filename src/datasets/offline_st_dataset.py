@@ -19,7 +19,9 @@ class OfflineSTSample(Sample):
     original_size: torch.Tensor
     image_size: torch.Tensor
     origin_ds: str
-    origin_ds_index: int
+    origin_ds_index: int  # index within GT or pseudo ds
+    origin_class: str
+    source_idx: Optional[int]  # index within source ds of Gt datasets
 
 
 class OfflineStDatasetArgs(BaseModel):
@@ -77,11 +79,13 @@ class OfflineSTTrainDataset(BaseDataset):
     def __getitem__(self, index: int):  # -> OfflineSTSample:
         if index >= len(self):
             raise IndexError
+        source_idx = None
         dataset, sample_index = self.index_map[index]
         if dataset == "pseudo":
             sample = self.pseudo_train[sample_index]
         elif dataset == "gt":
             sample = cast(JoinedRetinaSample, self.gt_train[sample_index])
+            source_idx = sample.idx
         else:
             raise ValueError(f"Unknown dataset {dataset}")
 
@@ -92,6 +96,8 @@ class OfflineSTTrainDataset(BaseDataset):
             image_size=sample.image_size,
             origin_ds=dataset,
             origin_ds_index=sample_index,
+            origin_class=sample.__class__.__name__,
+            source_idx=source_idx,
         )
 
     def get_collate_fn(self):  # type: ignore
@@ -114,6 +120,8 @@ class OfflineSTTrainDataset(BaseDataset):
                         "origin_dataset": s.origin_ds,
                         "origin_sample_idx": f"{s.origin_ds}_{s.origin_ds_index}",
                         "img_path": file_refs[s.origin_ds][s.origin_ds_index].gt_path,
+                        "origin_class": s.origin_class,
+                        "source_idx": s.source_idx,
                     }
                     for s in samples
                 ]

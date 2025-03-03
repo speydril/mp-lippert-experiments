@@ -21,6 +21,7 @@ from src.util.datatset_helper import suggest_split
 class STARESample(Sample):
     original_size: torch.Tensor
     image_size: torch.Tensor
+    idx: int
 
 
 @dataclass
@@ -82,6 +83,7 @@ class STAREDataset(BaseDataset):
             target=self.sam_trans.preprocess(mask),
             original_size=torch.Tensor(original_size),
             image_size=torch.Tensor(image_size),
+            idx=index,
         )
 
     def __len__(self):
