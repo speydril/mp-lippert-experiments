@@ -51,6 +51,7 @@ class OfflineSTTrainDataset(BaseDataset):
                 val_percentage=0.0,
                 test_percentage=0.0,
                 filter_scores_filepath=self.config.filter_scores_filepath,
+                threshold_pseudo_labels=False,
             ),
             yaml_config=yaml_config,
             with_masks=True,
@@ -94,17 +95,25 @@ class OfflineSTTrainDataset(BaseDataset):
         )
 
     def get_collate_fn(self):  # type: ignore
+        file_refs = {
+            "pseudo": self.pseudo_train.get_file_refs(),
+            "gt": self.gt_train.get_file_refs(),
+        }
+
         def collate(samples: list[OfflineSTSample]):
             inputs = torch.stack([s.input for s in samples])
             targets = torch.stack([s.target for s in samples])
             original_size = torch.stack([s.original_size for s in samples])
             image_size = torch.stack([s.image_size for s in samples])
-
+            is_gt = torch.tensor(
+                [s.origin_ds == "gt" for s in samples], dtype=torch.bool
+            )
             meta = {
                 "sample_metadata": [
                     {
                         "origin_dataset": s.origin_ds,
                         "origin_sample_idx": f"{s.origin_ds}_{s.origin_ds_index}",
+                        "img_path": file_refs[s.origin_ds][s.origin_ds_index].gt_path,
                     }
                     for s in samples
                 ]
@@ -115,6 +124,7 @@ class OfflineSTTrainDataset(BaseDataset):
                 original_size=original_size,
                 image_size=image_size,
                 metadata=meta,
+                is_gt=is_gt,
             )
 
         return collate

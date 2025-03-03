@@ -6,7 +6,6 @@ from src.datasets.joined_retina_dataset import (
     JoinedRetinaDataset,
     JoinedRetinaDatasetArgs,
 )
-from src.datasets.ukbiobank_dataset import UkBiobankDataset, UkBiobankDatasetArgs
 from src.models.auto_sam_model import AutoSamModel, AutoSamModelArgs
 from src.experiments.base_experiment import BaseExperiment, BaseExperimentArgs
 from src.models.base_model import BaseModel
@@ -53,7 +52,7 @@ class OfflineSTExperiment(BaseExperiment):
         super().__init__(config, yaml_config)
 
     def get_name(self) -> str:
-        return "offlinest_experiment"
+        return "offline_st_experiment"
 
     def _create_dataset(self, split: Literal["train", "val", "test"] = "train"):
         if split == "train":

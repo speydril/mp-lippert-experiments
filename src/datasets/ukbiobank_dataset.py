@@ -28,6 +28,7 @@ class UkBiobankDatasetArgs(BaseModel):
         description="Name of the the directory containing the pseudo labels to be filled into pattern <yaml_config.ukbiobank_masks_dir>/<pseudo_labels_dir>/generated_masks/[masks].png",
     )
     limit: Optional[int] = None
+    threshold_pseudo_labels: bool = True
 
 
 @dataclass
@@ -109,9 +110,11 @@ class UkBiobankDataset(BaseDataset):
         img, mask = augmentations(image, gt)
 
         mask = self.sam_trans.apply_image_torch(torch.Tensor(mask))
-        mask[mask > 0.5] = 1
-        mask[mask <= 0.5] = 0
-
+        if self.config.threshold_pseudo_labels:
+            mask[mask > 255 / 2] = 1
+            mask[mask <= 255 / 2] = 0
+        else:
+            mask /= 255
         original_size = tuple(img.shape[1:3])
         img = self.sam_trans.apply_image_torch(torch.Tensor(img))
         image_size = tuple(img.shape[1:3])
@@ -212,7 +215,7 @@ class UkBiobankDataset(BaseDataset):
     def cv2_loader(self, path: str, is_mask: bool):
         if is_mask:
             img = cv2.imread(path, 0)
-            img[img > 0] = 1
+            # img[img > 0] = 1
         else:
             img = cv2.cvtColor(cv2.imread(path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
         return img

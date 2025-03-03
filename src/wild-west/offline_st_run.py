@@ -134,11 +134,14 @@ def run_full_fine_tuning(
     n_teacher_samples: str,
     checkpoint_path: str,
     patches: Optional[int] = None,
+    offlineST_frozenImgEnc: bool = False,
 ):
     patching_name = f"_patched{patches}" if patches != None else ""
     subdir_name = (
         f"{prefix}{patching_name}_student_fft_{n_teacher_samples}_samples_{dir_suffix}"
     )
+    if offlineST_frozenImgEnc:
+        subdir_name += "_frozenImgEnc"
     cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=3 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=5 --visualize_n_segmentations=5 --gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00001 --prompt_encoder_lr=0.0001 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt{patching_name}_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
     if n_teacher_samples != "all":
         cmd += f" --limit_train_samples={n_teacher_samples}"
@@ -157,6 +160,9 @@ def run_full_fine_tuning(
         tags.append(f"Patched{patches}")
         tags.append("Patched")
         cmd += f" --patch_samples={patches}"
+    if offlineST_frozenImgEnc:
+        tags.append("FrozenImageEncoder")
+
     cmd += f" --wandb_tags={shlex.quote(json.dumps(tags))}"
 
     exec(cmd)
@@ -198,5 +204,9 @@ if __name__ == "__main__":
 
     print("Training FFT offlineST")
     run_full_fine_tuning(
-        "OfflineST", n_teacher_samples, str(student_checkpoint), patches=args.gt_patches
+        "OfflineST",
+        n_teacher_samples,
+        str(student_checkpoint),
+        patches=args.gt_patches,
+        offlineST_frozenImgEnc=args.freeze_image_encoder_in_st,
     )

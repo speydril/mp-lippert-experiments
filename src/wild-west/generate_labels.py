@@ -31,6 +31,12 @@ def parse_args():
         help="Threshold for for prediction quantization",
         default=0.5,
     )
+    parser.add_argument(
+        "--no_thresholding",
+        action="store_true",
+        help="Do not threshold the output mask",
+        default=False,
+    )
     args = parser.parse_args()
     return args
 
@@ -98,8 +104,9 @@ if __name__ == "__main__":
     for p in tqdm(relevant_filepaths, miniters=500):
         mask_out_path = masks_out_dir / os.path.basename(p)
         image, mask = model.segment_image_from_file(p)
-        mask[mask > 255 * args.optimal_threshold] = 255
-        mask[mask <= 255 * args.optimal_threshold] = 0
+        if not args.no_thresholding:
+            mask[mask > 255 * args.optimal_threshold] = 255
+            mask[mask <= 255 * args.optimal_threshold] = 0
         mask_img = mask * np.array([1, 1, 1])
         cv2.imwrite(str(mask_out_path), mask_img)
 
