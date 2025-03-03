@@ -34,14 +34,6 @@ class AutoSamModelArgs(PDBaseModel):
     hard_net_arch: int = 68
     depth_wise: bool = False
     Idim: int = 512
-    lower_confidence_quantile: Optional[float] = Field(
-        default=None,
-        description="Lower quantile of confidence of targets, should be between 0.0 and 0.5 with 0.5 being the least restrictive",
-    )
-    upper_confidence_quantile: Optional[float] = Field(
-        default=None,
-        description="Upper quantile of confidence of targets, should be between 0.5 and 1.0 with 0.5 being the least restrictive",
-    )
     lower_confidence_threshold: Optional[float] = Field(
         default=None,
         description="Lower threshold of confidence of targets, should be between 0.0 and 1.0",
@@ -110,16 +102,8 @@ class AutoSamModel(BaseModel[SAMBatch]):
         batch: SAMBatch,
     ) -> Loss:
         assert batch.target is not None
-        assert (
-            self.config.upper_confidence_quantile is None
-            or self.config.upper_confidence_threshold is None
-        ), "Cannot have both upper confidence quantile and upper confidence threshold"
-        assert (
-            self.config.lower_confidence_quantile is None
-            or self.config.lower_confidence_threshold is None
-        ), "Cannot have both lower confidence quantile and lower confidence threshold"
         normalized_logits = norm_batch(outputs.logits)
-        size = batch.target.shape[-2:]
+        size = outputs.logits.shape[2:]
 
         gts_sized = F.interpolate(
             (
