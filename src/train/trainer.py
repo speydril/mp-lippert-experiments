@@ -104,7 +104,7 @@ class Trainer:
                     # calculate gradient for whole model (but only optimize parts)
                     outputs = self.model.forward(batch)
 
-            loss = self.model.compute_loss(outputs, batch, confidence_thresholding=True)
+            loss = self.model.compute_loss(outputs, batch)
 
             scaler.scale(loss.loss).backward()
 
