@@ -33,6 +33,7 @@ class OfflineStDatasetArgs(BaseModel):
     )
     labelled_ratio: float = 0.25
     gt_limit: Optional[int] = None
+    threshold_pseudo_labels: bool = False
 
 
 class OfflineSTTrainDataset(BaseDataset):
@@ -53,7 +54,7 @@ class OfflineSTTrainDataset(BaseDataset):
                 val_percentage=0.0,
                 test_percentage=0.0,
                 filter_scores_filepath=self.config.filter_scores_filepath,
-                threshold_pseudo_labels=False,
+                threshold_pseudo_labels=self.config.threshold_pseudo_labels,
             ),
             yaml_config=yaml_config,
             with_masks=True,
