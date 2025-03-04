@@ -111,8 +111,11 @@ class UkBiobankDataset(BaseDataset):
 
         mask = self.sam_trans.apply_image_torch(torch.Tensor(mask))
         if self.config.threshold_pseudo_labels:
-            mask[mask > 255 / 2] = 1
-            mask[mask <= 255 / 2] = 0
+            true_mask = mask > 255 / 2
+            false_mask = mask <= 255 / 2
+
+            mask[true_mask] = 1
+            mask[false_mask] = 0
         else:
             mask /= 255
         original_size = tuple(img.shape[1:3])
