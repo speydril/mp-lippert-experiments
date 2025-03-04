@@ -77,6 +77,7 @@ if __name__ == "__main__":
         "model_checkpoint": model_checkpoint,
         "script_source": Path(__file__).read_text(),
         "filter_threshold": filter_threshold,
+        "args": vars(args),
     }
 
     with open(os.path.join(output_path, "metadata.json"), "w") as f:
