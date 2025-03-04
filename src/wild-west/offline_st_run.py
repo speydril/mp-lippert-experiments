@@ -31,11 +31,6 @@ def parse_args():
         help="Path to checkpoint of teacher model",
     )
     parser.add_argument(
-        "--optimal_threshold",
-        type=float,
-        help="Optimal threshold for teacher model",
-    )
-    parser.add_argument(
         "--skip_pseudo_label_gen",
         action="store_true",
         help="Skip pseudo label generation. If set, the pseudo labels must have been generated already.",
@@ -67,14 +62,13 @@ def exec(cmd: str):
 def generate_pseudo_labels(
     n_teacher_samples: str,
     teacher_checkpoint: str,
-    optimal_threshold: float,
     limit: Optional[int] = None,
     skip_pseudo_label_gen: bool = False,
 ):
     pseudo_labels_dir_name = f"teacher_{n_teacher_samples}_samples"
 
     if not skip_pseudo_label_gen:
-        cmd = f"python src/wild-west/generate_labels.py --out_dir_name={pseudo_labels_dir_name} --teacher_checkpoint={teacher_checkpoint} --optimal_threshold={optimal_threshold}"
+        cmd = f"python src/wild-west/generate_labels.py --out_dir_name={pseudo_labels_dir_name} --teacher_checkpoint={teacher_checkpoint}"
         if limit != None:
             cmd += f" --limit={limit}"
         exec(cmd)
@@ -91,6 +85,12 @@ def run_student_st(
     limit: Optional[int] = None,
     freeze_image_encoder: bool = False,
 ):
+    #python run.py --experiment_id=offline_st --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=2 
+    # --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false 
+    # --from_checkpoint=/dhc/groups/mp2024cl2/results/multi_ds_vessel_experiment/baseline_patched4_all_samples_aug/2025-02-16_01#38#17/model.pt 
+    # --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --amp=true --wandb_experiment_name=ukbiobank_offlineST_teacherallsamples_frozenImgEnc_mixedlabels 
+    # --pseudo_labels_dir=teacher_all_samples --results_subdir_name=offlineST_student_all_samples_frozenImgEnc_mixedLabels 
+    # --wandb_tags="[\"OfflineST\", \"StudentTraining\", \"VesselSeg\", \"PseudoLabelsMixedGt\", \"all_samples\", \"FrozenImageEncoder\"]"
     student_experiment_subdir_name = (
         f"offlineST_student_{n_teacher_samples}_samples_{dir_suffix}"
     )
@@ -144,7 +144,7 @@ def run_full_fine_tuning(
         subdir_name += "_frozenImgEnc"
     cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=3 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=5 --visualize_n_segmentations=5 --gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00001 --prompt_encoder_lr=0.0001 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt{patching_name}_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
     if n_teacher_samples != "all":
-        cmd += f" --limit_train_samples={n_teacher_samples}"
+        cmd += f" --limit_train_samples={n_teacher_samples * (patches if patches != None else 1)}"
 
     tags = [
         "OfflineST",
@@ -187,7 +187,6 @@ if __name__ == "__main__":
     pseudo_labels_dir, pseudo_labels_dir_name = generate_pseudo_labels(
         n_teacher_samples,
         str(teacher_checkpoint),
-        optimal_threshold=args.optimal_threshold,
         limit=1000 if debug else None,
         skip_pseudo_label_gen=args.skip_pseudo_label_gen,
     )
