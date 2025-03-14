@@ -1,5 +1,5 @@
 import os
-from typing import Literal, Optional
+from typing import Optional
 from src.args.yaml_config import YamlConfig
 from pathlib import Path
 import argparse
@@ -46,6 +46,16 @@ def parse_args():
         action="store_true",
         help="Freeze image encoder in self training",
     )
+    parser.add_argument(
+        "--gt_ratio",
+        type=float,
+        help="Average ratio of GT samples in offlineST training",
+    )
+    parser.add_argument(
+        "--confidence",
+        action="store_true",
+        help="Use confidence in offlineST training",
+    )
     args = parser.parse_args()
     return args
 
@@ -65,7 +75,7 @@ def generate_pseudo_labels(
     limit: Optional[int] = None,
     skip_pseudo_label_gen: bool = False,
 ):
-    pseudo_labels_dir_name = f"teacher_{n_teacher_samples}_samples"
+    pseudo_labels_dir_name = f"teacher_{n_teacher_samples}_samples_not_thresholded"
 
     if not skip_pseudo_label_gen:
         cmd = f"python src/wild-west/generate_labels.py --out_dir_name={pseudo_labels_dir_name} --teacher_checkpoint={teacher_checkpoint}"
@@ -82,21 +92,16 @@ def run_student_st(
     n_teacher_samples: str,
     pseudo_labels_dir_name: str,
     teacher_checkpoint: str,
+    gt_ratio: float,
+    confidence: bool,
     limit: Optional[int] = None,
     freeze_image_encoder: bool = False,
 ):
-    #python run.py --experiment_id=offline_st --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=2 
-    # --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false 
-    # --from_checkpoint=/dhc/groups/mp2024cl2/results/multi_ds_vessel_experiment/baseline_patched4_all_samples_aug/2025-02-16_01#38#17/model.pt 
-    # --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --amp=true --wandb_experiment_name=ukbiobank_offlineST_teacherallsamples_frozenImgEnc_mixedlabels 
-    # --pseudo_labels_dir=teacher_all_samples --results_subdir_name=offlineST_student_all_samples_frozenImgEnc_mixedLabels 
-    # --wandb_tags="[\"OfflineST\", \"StudentTraining\", \"VesselSeg\", \"PseudoLabelsMixedGt\", \"all_samples\", \"FrozenImageEncoder\"]"
+
     student_experiment_subdir_name = (
         f"offlineST_student_{n_teacher_samples}_samples_{dir_suffix}"
     )
-    wandb_exp_name = (
-        f"{debug_prefix}ukbiobank_offlineST_teacher{n_teacher_samples}samples"
-    )
+    wandb_exp_name = f"{debug_prefix}offlineST_student_{n_teacher_samples}samples"
     tags = [
         "OfflineST",
         "StudentTraining",
@@ -109,17 +114,41 @@ def run_student_st(
         student_experiment_subdir_name += "_frozenImgEnc"
         wandb_exp_name += "_frozenImgEnc"
         tags.append("FrozenImageEncoder")
-    cmd = f"python run.py --experiment_id=uk_biobank_experiment --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=5 --weight_decay=1e-4 --early_stopping_patience=3 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={teacher_checkpoint} --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={wandb_exp_name} --augment_train=false --pseudo_labels_dir={pseudo_labels_dir_name} --results_subdir_name={student_experiment_subdir_name}"
+
+    if gt_ratio != 0:
+        student_experiment_subdir_name += f"_{gt_ratio}mixedLabels"
+        wandb_exp_name += f"_{gt_ratio}mixedLabels"
+        tags.append("MixedLabels")
+        tags.append(f"{gt_ratio}MixedLabels")
+
+    if confidence:
+        student_experiment_subdir_name += "_confidence"
+        wandb_exp_name += "_confidence"
+        tags.append("Confidence")
+
+    cmd = (
+        f"python run.py --experiment_id=offline_st --sam_model=vit_b --learning_rate=0.0003 --batch_size=16 --epochs=1 --weight_decay=1e-4 "
+        f"--early_stopping_patience=2 --visualize_n_segmentations=5 --gamma=0.85 --step_size=1 --best_model_metric=IoU --minimize_best_model_metric=false "
+        f"--from_checkpoint={teacher_checkpoint} --prompt_encoder_lr=0.0003 --mask_decoder_lr=0.0001 --use_wandb=true "
+        f"--amp=true --wandb_experiment_name={wandb_exp_name} --pseudo_labels_dir={pseudo_labels_dir_name} "
+        f"--results_subdir_name={student_experiment_subdir_name} --labelled_ratio={gt_ratio} --threshold_pseudo_labels={not confidence}"
+    )
+    if n_teacher_samples != "all":
+        cmd += f" --gt_limit={int(n_teacher_samples)}"
     if limit != None:
         cmd += f" --limit={limit}"
 
     if not freeze_image_encoder:
         cmd += " --image_encoder_lr=0.00005"
+    if confidence:
+        cmd += " --lower_confidence_threshold=0.2"
+        cmd += " --upper_confidence_threshold=0.8"
+
     cmd += f" --wandb_tags={shlex.quote(json.dumps(tags))}"
     exec(cmd)
     student_checkpoint_dir = (
         Path(yaml_config.results_dir)
-        / "uk_biobank_experiment"
+        / "offline_st_experiment"
         / student_experiment_subdir_name
     )
     student_dirs = os.listdir(student_checkpoint_dir)
@@ -130,22 +159,20 @@ def run_student_st(
 
 
 def run_full_fine_tuning(
-    prefix: Literal["NoST", "OfflineST"],
     n_teacher_samples: str,
     checkpoint_path: str,
+    offlineST_mixed_ratio: float,
+    offlineST_confidence: bool,
     patches: Optional[int] = None,
     offlineST_frozenImgEnc: bool = False,
 ):
     patching_name = f"_patched{patches}" if patches != None else ""
     subdir_name = (
-        f"{prefix}{patching_name}_student_fft_{n_teacher_samples}_samples_{dir_suffix}"
+        f"OfflineST{patching_name}_student_fft_{n_teacher_samples}_samples_{dir_suffix}"
     )
     if offlineST_frozenImgEnc:
         subdir_name += "_frozenImgEnc"
-    cmd = f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 --batch_size=3 --epochs=100 --weight_decay=1e-4 --early_stopping_patience=5 --visualize_n_segmentations=5 --gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} --image_encoder_lr=0.00001 --prompt_encoder_lr=0.0001 --mask_decoder_lr=0.0001 --use_wandb=true --drive_test_equals_val=false --amp=true --wandb_experiment_name={debug_prefix}vessels_gt{patching_name}_{prefix}_fft_{n_teacher_samples}_samples --results_subdir_name={subdir_name}"
-    if n_teacher_samples != "all":
-        cmd += f" --limit_train_samples={n_teacher_samples * (patches if patches != None else 1)}"
-
+    wandb_exp_name = f"{debug_prefix}vessels_gt{patching_name}_OfflineST_fft_{n_teacher_samples}_samples"
     tags = [
         "OfflineST",
         "FinalFinetuning",
@@ -154,8 +181,26 @@ def run_full_fine_tuning(
         "FullModel",
         f"{n_teacher_samples}_samples",
     ]
-    if prefix == "NoST":
-        tags.append("Baseline")
+    if offlineST_mixed_ratio:
+        subdir_name += f"_{offlineST_mixed_ratio}mixedLabels"
+        wandb_exp_name += f"_{offlineST_mixed_ratio}mixedLabels"
+        tags.append("MixedLabels")
+        tags.append(f"{offlineST_mixed_ratio}MixedLabels")
+    if offlineST_confidence:
+        subdir_name += "_confidence"
+        wandb_exp_name += "_confidence"
+        tags.append("Confidence")
+    cmd = (
+        f"python run.py --experiment_id=multi_ds_vessel --sam_model=vit_b --learning_rate=0.0003 "
+        f"--batch_size=3 --epochs=50 --weight_decay=1e-4 --early_stopping_patience=5 --visualize_n_segmentations=5 "
+        f"--gamma=0.95 --step_size=3 --best_model_metric=IoU --minimize_best_model_metric=false --from_checkpoint={checkpoint_path} "
+        f"--image_encoder_lr=0.00001 --prompt_encoder_lr=0.0001 --mask_decoder_lr=0.0001 --use_wandb=true "
+        f"--drive_test_equals_val=false --amp=true --wandb_experiment_name={wandb_exp_name} "
+        f"--results_subdir_name={subdir_name} --augment_train=true"
+    )
+    if n_teacher_samples != "all":
+        cmd += f" --limit_train_samples={int(n_teacher_samples) * (patches if patches != None else 1)}"
+
     if patches != None:
         tags.append(f"Patched{patches}")
         tags.append("Patched")
@@ -178,7 +223,11 @@ if __name__ == "__main__":
     args = parse_args()
     debug = args.debug
     debug_prefix = "DEBUG_" if debug else ""
-    n_teacher_samples = str(args.n_teacher_samples) if args.n_teacher_samples else "all"
+    n_teacher_samples = (
+        str(args.n_teacher_samples)
+        if args.n_teacher_samples and not args.n_teacher_samples == 229
+        else "all"
+    )
 
     teacher_checkpoint = args.teacher_checkpoint
     print(
@@ -197,15 +246,18 @@ if __name__ == "__main__":
         n_teacher_samples,
         pseudo_labels_dir_name,
         str(teacher_checkpoint),
+        gt_ratio=args.gt_ratio,
+        confidence=args.confidence,
         limit=1000 if debug else None,
         freeze_image_encoder=args.freeze_image_encoder_in_st,
     )
 
     print("Training FFT offlineST")
     run_full_fine_tuning(
-        "OfflineST",
         n_teacher_samples,
         str(student_checkpoint),
+        offlineST_mixed_ratio=args.gt_ratio,
+        offlineST_confidence=args.confidence,
         patches=args.gt_patches,
         offlineST_frozenImgEnc=args.freeze_image_encoder_in_st,
     )
